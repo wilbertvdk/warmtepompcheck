@@ -191,7 +191,7 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
       <input type="file" id="files" accept=".csv,text/csv" multiple>
     </label>
     <div class="row">
-      <button type="button" class="ghost" id="demo" hidden>Probeer met voorbeelddata</button>
+      <button type="button" class="ghost" id="demo" hidden>Bekijk een voorbeeldhuis</button>
     </div>
     <div class="filelist" id="filelist"></div>
     <details>
@@ -636,6 +636,7 @@ function analyseData() {
     { unit: "m³", yLabel: "m³ gas per maand (bruikbare dagen)", title: "Gasverbruik per maand" });
 
   const checks = [];
+  if (state.demo) checks.push(notice("ok", "<b>Voorbeeldhuis.</b> Dit is een geanonimiseerd huis uit de omgeving van Utrecht, met gasverbruik per dag van december 2022 tot april 2026. Upload je eigen bestanden om je eigen huis te zien."));
   const winters = new Set(d.keys.filter(k => [12, 1, 2].includes(+k.slice(5, 7))).map(k => k.slice(0, 7)));
   if (winters.size < 3) checks.push(notice("warn", "<b>Te weinig wintermaanden.</b> Voor een betrouwbare uitkomst is minstens één hele winter nodig (december t/m februari)."));
   else checks.push(notice("ok", `<b>Genoeg data.</b> ${fmt(winters.size)} wintermaanden gevonden.`));
@@ -735,8 +736,8 @@ function renderReport() {
 
   let html = `
   <div class="hero">
-    <span class="tag">Resultaat · ${esc(state.place.name)}</span>
-    <h2 style="font-size:1.9rem">Jouw huis verliest ongeveer ${fmt(Math.round(UA / 10) * 10)} watt per graad</h2>
+    <span class="tag">Resultaat · ${state.demo ? "voorbeeldhuis · " : ""}${esc(state.place.name)}</span>
+    <h2 style="font-size:1.9rem">${state.demo ? "Dit huis" : "Jouw huis"} verliest ongeveer ${fmt(Math.round(UA / 10) * 10)} watt per graad</h2>
     <p class="lede">Is het buiten 1 °C kouder, dan moet de verwarming ${fmt(Math.round(UA / 10) * 10)} W extra leveren. Op een koude dag van ${fmt(o.tdesign)} °C is dat in totaal ongeveer ${fmt(Pdesign, 1)} kW.</p>
     <div class="kpis">
       ${kpi(fmt(Math.round(UA / 10) * 10), "W/K", "Warmteverlies", "per graad verschil binnen–buiten")}
@@ -909,22 +910,31 @@ function existingBlock() {
 
 /* ============================================================ koppelingen */
 const drop = $("#drop"), inp = $("#files");
-inp.addEventListener("change", () => { addFiles([...inp.files]); inp.value = ""; });
+// Eigen bestanden na het voorbeeldhuis: eerst het voorbeeld wissen, anders lopen de data door elkaar
+function leaveDemo() {
+  if (!state.demo) return;
+  Object.assign(state, { demo: false, files: [], readings: [], daily: null });
+  $("#report").hidden = true; $("#report").innerHTML = "";
+  $("#demo").disabled = false;
+}
+inp.addEventListener("change", () => { leaveDemo(); addFiles([...inp.files]); inp.value = ""; });
 drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inp.click(); } });
 ["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
 ["dragleave", "drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
-drop.addEventListener("drop", e => addFiles([...e.dataTransfer.files]));
+drop.addEventListener("drop", e => { leaveDemo(); addFiles([...e.dataTransfer.files]); });
 $("#placeBtn").onclick = searchPlace;
 $("#place").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); searchPlace(); } });
 document.querySelectorAll("input[name=mode], #since").forEach(e => e.addEventListener("change", updateCalc));
 $("#qform").addEventListener("submit", calculate);
 
-// Voorbeelddata: alleen als er een map voorbeeld/ met manifest.json naast de pagina staat
-fetch("voorbeeld/manifest.json").then(r => r.ok ? r.json() : null).then(man => {
+// Voorbeeldhuis: geanonimiseerde dagstanden (dagtotalen, afwezigheid weggepoetst, geschaald met ruis)
+fetch("voorbeeldhuis/manifest.json").then(r => r.ok ? r.json() : null).then(man => {
   if (!man) return;
   const btn = $("#demo"); btn.hidden = false;
   btn.onclick = async () => {
     btn.disabled = true;
+    state.demo = true;
+    track("voorbeeldhuis");
     const files = await Promise.all(man.files.map(async f => ({ name: f.split("/").pop(), content: await (await fetch(f)).text() })));
     await addFiles(files);
     if (man.place) { $("#place").value = man.place; await searchPlace(); }
