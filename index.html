@@ -204,7 +204,7 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
         <li>Heb je kwartierwaarden (max. 365 dagen per bestand)? Upload dan alle jaarbestanden tegelijk.</li>
       </ol>
       <p style="margin-top:10px"><b>Bosch of Nefit cv-ketel of hybride</b> (HomeCom Easy, EasyControl)</p>
-      <p class="muted">Exporteer in de app de energiegegevens als csv (het bestand heet meestal <code>Energiegegevens.csv</code>). De ketel schat zijn gasverbruik zelf; we rekenen met 9,5 kWh per m³.</p>
+      <p class="muted">Exporteer in de app de energiegegevens als csv (het bestand heet meestal <code>Energiegegevens.csv</code>). De ketel meet geen gas maar schat het zelf; we rekenen met 9,5 kWh per m³. Bij één ketel week die schatting over de jaren tot 15 % af van de gasmeter. Heb je ook meterdata (HomeWizard of je leverancier), upload die dan: die zijn nauwkeuriger.</p>
       <p style="margin-top:10px"><b>Je energieleverancier</b></p>
       <p class="muted">Download in je online omgeving je gasverbruik per uur of per dag als <b>csv</b>, bijvoorbeeld bij Frank Energie. Excel-bestanden (.xlsx) werken nog niet: sla ze eerst op als csv.</p>
       <p class="muted" style="margin-top:8px">Nodig: minstens één winter, liefst een paar jaar. Je kunt bestanden uit verschillende bronnen tegelijk uploaden. Stroombestanden worden nog niet gebruikt. Werkt jouw bestand niet? Laat via het feedbackformulier weten van welke app of leverancier het komt, dan kijken we of we het kunnen toevoegen.</p>
@@ -648,7 +648,7 @@ async function addFiles(list) {
     const res = parseFile(text);
     state.files.push({ name: file.name, kind: res.kind, n: res.n || 0 });
     if (res.readings) state.readings.push(...res.readings);
-    if (res.days) state.dayMaps.push(res.days);
+    if (res.days) state.dayMaps.push({ kind: res.kind, days: res.days });
   }
   renderFiles();
   if (state.readings.length || state.dayMaps.length) {
@@ -665,11 +665,13 @@ function renderFiles() {
 
 /* ============================================================ stap 2: controle */
 // Alle bronnen samenvoegen tot één reeks per dag. Bij overlap wint de fijnste bron
-// (HomeWizard-meterstanden), daarna de bestanden in volgorde van uploaden.
+// HomeWizard-meterstanden, dan leveranciersdata, dan de Bosch-schatting.
 function combineDaily() {
   const d = state.readings.length ? toDaily(state.readings)
     : { days: new Map(), swapDays: 0, badDays: 0, incomplete: 0, resolution: DAY };
-  for (const m of state.dayMaps) for (const [k, v] of m) if (!d.days.has(k)) d.days.set(k, v);
+  const rank = m => (m.kind === "bosch" ? 1 : 0);          // meterdata van de leverancier gaan vóór de Bosch-schatting
+  for (const m of [...state.dayMaps].sort((a, b) => rank(a) - rank(b)))
+    for (const [k, v] of m.days) if (!d.days.has(k)) d.days.set(k, v);
   d.keys = [...d.days.keys()].sort();
   d.first = d.keys[0]; d.last = d.keys[d.keys.length - 1];
   if (!state.readings.length) d.resolution = state.files.some(f => f.kind === "leverancier-uur") ? HOUR : DAY;
@@ -708,6 +710,11 @@ function analyseData() {
   const winters = new Set(d.keys.filter(k => [12, 1, 2].includes(+k.slice(5, 7))).map(k => k.slice(0, 7)));
   if (winters.size < 3) checks.push(notice("warn", "<b>Te weinig wintermaanden.</b> Voor een betrouwbare uitkomst is minstens één hele winter nodig (december t/m februari)."));
   else checks.push(notice("ok", `<b>Genoeg data.</b> ${fmt(winters.size)} wintermaanden gevonden.`));
+  if (state.files.some(f => f.kind === "bosch"))
+    checks.push(notice(state.readings.length || state.files.some(f => f.kind.startsWith("leverancier")) ? "ok" : "warn",
+      state.readings.length || state.files.some(f => f.kind.startsWith("leverancier"))
+        ? "<b>Bosch/Nefit-data aangevuld met meterdata.</b> Waar beide er zijn, gebruiken we de meter."
+        : "<b>Schatting van de ketel.</b> Bosch/Nefit meet geen gas maar schat het. Die schatting kan over de jaren tot 15 % verschuiven, dus vergelijk winters met voorzichtigheid. Meterdata van HomeWizard of je leverancier zijn nauwkeuriger."));
   if (d.swapDays) checks.push(notice("ok", `<b>Meterwissel gevonden</b> (${d.swapDays === 1 ? "1 dag" : d.swapDays + " dagen"}). Die dag laten we weg, de rest telt gewoon mee.`));
   const missing = Math.round(span - d.keys.length);
   if (missing > 5) checks.push(notice(missing > span * 0.2 ? "warn" : "ok", `<b>${fmt(missing)} dagen ontbreken of zijn onvolledig</b> binnen de periode. Die slaan we over.`));
