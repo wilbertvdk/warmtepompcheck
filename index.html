@@ -173,7 +173,7 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
 <header class="top">
   <span class="tag">Onderzoeksprototype</span>
   <h1>Warmtepompcheck</h1>
-  <p class="lede">Upload het gasverbruik van je slimme meter. Je ziet hoeveel warmte je huis verliest per graad dat het buiten kouder wordt, welk vermogen een warmtepomp nodig heeft, en wat hij ongeveer bespaart.</p>
+  <p class="lede">Upload het gasverbruik van je slimme meter (HomeWizard of Toon). Je ziet hoeveel warmte je huis verliest per graad dat het buiten kouder wordt, welk vermogen een warmtepomp nodig heeft, en wat hij ongeveer bespaart.</p>
   <ul class="promises">
     <li>Je verbruik blijft op je eigen apparaat</li>
     <li>Gratis, geen account</li>
@@ -187,8 +187,8 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
   <div class="step-body" style="display:grid;gap:16px">
     <label class="drop" id="drop" tabindex="0" for="files">
       <strong>Sleep je bestanden hierheen</strong>
-      <span class="muted">of tik om ze te kiezen · HomeWizard-export (.csv), meerdere bestanden mag</span>
-      <input type="file" id="files" accept=".csv,text/csv" multiple>
+      <span class="muted">of tik om ze te kiezen · HomeWizard- of Toon-export (.csv of .json), meerdere bestanden mag</span>
+      <input type="file" id="files" accept=".csv,.json,.txt,text/csv,application/json" multiple>
     </label>
     <div class="row">
       <button type="button" class="ghost" id="demo" hidden>Probeer met voorbeelddata</button>
@@ -203,6 +203,16 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
         <li>Heb je kwartierwaarden (max. 365 dagen per bestand)? Upload dan alle jaarbestanden tegelijk.</li>
       </ol>
       <p class="muted" style="margin-top:8px">Nodig: minstens één winter, liefst een paar jaar. De bestanden heten meestal <code>P1g-…csv</code>. Stroombestanden (<code>P1e-…</code>) worden nu nog niet gebruikt.</p>
+    </details>
+    <details>
+      <summary>Zo haal je je gasverbruik uit een Toon</summary>
+      <ol>
+        <li>Toon bewaart het gasverbruik per dag, jaren terug. Die data haal je rechtstreeks van de Toon zelf. Dat kan alleen als de Toon <b>geroot</b> is (met ToonStore); anders geeft hij de data niet vrij.</li>
+        <li>Zoek het IP-adres van je Toon (<b>Instellingen → Internet</b>, of in je router).</li>
+        <li>Open in de browser op je thuisnetwerk:<br><code style="word-break:break-all">http://&lt;ip-van-je-toon&gt;/hcb_rrd?action=getRrdData&amp;loggerName=gas_quantity&amp;rra=10yrdays&amp;readableTime=1&amp;nullForNaN=1</code></li>
+        <li>Bewaar de pagina als bestand (bijv. <code>toon-gas.json</code>) en upload dat hier. Toon telt in liters; dat rekenen we zelf om.</li>
+      </ol>
+      <p class="muted" style="margin-top:8px">Andere exports werken meestal ook: een CSV of JSON met een datum en per dag of per uur het gasverbruik of de meterstand, bijvoorbeeld van je energieleverancier. Een Excel-bestand eerst opslaan als CSV.</p>
     </details>
   </div>
 </section>
@@ -312,45 +322,100 @@ const eur = v => (v < 0 ? "−" : "") + "€ " + fmt(Math.abs(v), 0);
 const dkey = t => new Date(t).toISOString().slice(0, 10);   // tijden staan als 'UTC' opgeslagen = lokale kloktijd
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-const state = { files: [], readings: [], daily: null, place: null };
+const state = { files: [], readings: [], usage: [], daily: null, place: null };
 
 /* ============================================================ inlezen */
 function parseNum(s) {
   if (s == null) return NaN;
-  s = s.replace(/"/g, "").trim();
+  if (typeof s === "number") return s;
+  s = String(s).replace(/"/g, "").trim();
   if (!s) return NaN;
-  if (s.includes(",") && !s.includes(".")) s = s.replace(",", ".");
+  if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  else if (s.includes(",")) s = s.replace(",", ".");
   return parseFloat(s);
 }
+// Tijden als 'UTC' = lokale kloktijd. Kent 2024-01-31 12:00, 31-01-2024 12:00, 31/01/2024 en Unix-tijd (s of ms).
 function parseTime(s) {
-  const m = /(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?/.exec(s || "");
-  if (!m) return null;
-  return Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0));
-}
-function parseFile(text) {
-  const lines = text.replace(/^﻿/, "").split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) return { kind: "leeg" };
-  const sep = lines[0].split(";").length > lines[0].split(",").length ? ";" : ",";
-  const head = lines[0].split(sep).map(h => h.replace(/"/g, "").trim().toLowerCase());
-  const gi = head.findIndex(h => h.includes("gas"));
-  if (gi < 0) return { kind: head.some(h => h.includes("import")) ? "stroom" : "onbekend" };
-  const out = [];
-  for (let i = 1; i < lines.length; i++) {
-    const c = lines[i].split(sep);
-    const t = parseTime(c[0]), v = parseNum(c[gi]);
-    if (t != null && isFinite(v)) out.push({ t, v });
+  s = String(s ?? "").replace(/"/g, "").trim();
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?/.exec(s);
+  if (m) return Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0));
+  m = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})(?:[ T](\d{1,2}):(\d{2}))?/.exec(s);
+  if (m) return Date.UTC(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0));
+  if (/^\d{10}(\d{3})?(\.\d+)?$/.test(s)) {
+    const d = new Date(s.length >= 13 ? +s : +s * 1000);
+    return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes());
   }
-  return { kind: "gas", readings: out };
+  return null;
+}
+const median = a => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
+
+/* Een reeks (tijd, waarde) is óf een meterstand (loopt op) óf verbruik per periode.
+   Toon logt gas in liters (dm³); dat herkennen we aan onmogelijk hoge waarden per dag. */
+function toGas(rows, source) {
+  rows = rows.filter(x => x.t != null && isFinite(x.v)).sort((a, b) => a.t - b.t)
+    .filter((x, i, a) => i === 0 || x.t !== a[i - 1].t);
+  if (rows.length < 2) return { kind: "leeg" };
+  let down = 0;
+  const gaps = [], rates = [];
+  for (let i = 1; i < rows.length; i++) {
+    const gap = rows[i].t - rows[i - 1].t, d = rows[i].v - rows[i - 1].v;
+    if (d < 0) down++;
+    gaps.push(gap);
+    if (d > 0) rates.push(d / gap * DAY);
+  }
+  const cumulative = down <= Math.max(2, 0.02 * rows.length);
+  const dur = median(gaps);
+  const perDay = cumulative ? median(rates) : median(rows.filter(x => x.v > 0).map(x => x.v / dur * DAY));
+  const scale = perDay > 100 ? 1 / 1000 : 1;                     // liters -> m³
+  const out = rows.map(x => cumulative ? { t: x.t, v: x.v * scale } : { t: x.t, v: x.v * scale, dur });
+  return { kind: "gas", source, unit: scale < 1 ? "liter" : "m³", cumulative,
+           [cumulative ? "readings" : "usage"]: out };
 }
 
-/* Meterstanden -> verbruik per dag. Een dag telt alleen mee als hij (bijna) helemaal
-   gedekt is en er geen sprong terug in zit (meterwissel). */
-function toDaily(readings) {
+// Toon (hcb_rrd) geeft JSON: {"31-01-2024 00:00:00": 1234567, …}, of een lijst [tijd, waarde] / {time, value}.
+function parseJson(text, name) {
+  let j;
+  try { j = JSON.parse(text); } catch (e) { return { kind: "onbekend" }; }
+  if (j && !Array.isArray(j)) j = j.data || j.values || j.gas || j;
+  let rows = [];
+  if (Array.isArray(j)) rows = j.map(x => Array.isArray(x) ? { t: parseTime(x[0]), v: parseNum(x[1]) }
+    : { t: parseTime(x.time ?? x.timestamp ?? x.date ?? x.datum ?? x.t), v: parseNum(x.value ?? x.gas ?? x.v) });
+  else if (j && typeof j === "object") rows = Object.entries(j).map(([k, v]) => ({ t: parseTime(k), v: v == null ? NaN : parseNum(v) }));
+  if (/elec|stroom|power|P1e/i.test(name)) return { kind: "stroom" };
+  return toGas(rows, "Toon");
+}
+
+function parseFile(text, name = "") {
+  text = text.replace(/^﻿/, "");
+  if (/^\s*[{[]/.test(text)) return parseJson(text.trim(), name);
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return { kind: "leeg" };
+  const sep = [";", "\t", ","].reduce((b, s) => lines[0].split(s).length > lines[0].split(b).length ? s : b, ",");
+  const head = lines[0].split(sep).map(h => h.replace(/"/g, "").trim().toLowerCase());
+  let ti = head.findIndex(h => /datum|date|tijd|time/.test(h)), gi, start = 1;
+  if (parseTime(head[0]) != null) {                               // geen kopregel: tijd;waarde
+    if (/elec|stroom|power|P1e/i.test(name)) return { kind: "stroom" };
+    ti = 0; gi = 1; start = 0;
+  } else {
+    gi = head.findIndex(h => h.includes("gas") && !/kost|€|eur|prijs|tarief/.test(h));
+    if (gi < 0) return { kind: head.some(h => /import|stroom|elec|kwh/.test(h)) ? "stroom" : "onbekend" };
+  }
+  if (ti < 0 || ti === gi) ti = 0;
+  const rows = [];
+  for (let i = start; i < lines.length; i++) {
+    const c = lines[i].split(sep);
+    rows.push({ t: parseTime(c[ti]), v: parseNum(c[gi]) });
+  }
+  return toGas(rows, /homewizard|^P1g/i.test(name) || head.includes("time") ? "HomeWizard" : "export");
+}
+
+/* Meterstanden (en verbruik per periode) -> verbruik per dag. Een dag telt alleen mee als hij
+   (bijna) helemaal gedekt is en er geen sprong terug in zit (meterwissel). */
+function toDaily(readings, usage = []) {
   const r = [...readings].sort((a, b) => a.t - b.t).filter((x, i, a) => i === 0 || x.t !== a[i - 1].t);
   const gaps = [];
   for (let i = 1; i < Math.min(r.length, 3000); i++) gaps.push(r[i].t - r[i - 1].t);
-  gaps.sort((a, b) => a - b);
-  const med = gaps[gaps.length >> 1] || DAY;
+  const med = gaps.length ? median(gaps) : usage.length ? median(usage.map(x => x.dur)) : DAY;
   const gapMax = Math.max(1.5 * med, 2 * HOUR);
   const use = new Map(), cov = new Map(), bad = new Set(), swapDays = new Set();
   for (let i = 1; i < r.length; i++) {
@@ -363,6 +428,18 @@ function toDaily(readings) {
     use.set(k, (use.get(k) || 0) + d);
     cov.set(k, (cov.get(k) || 0) + gap);
   }
+  // verbruik per periode (bijv. Toon-export per dag of uur): optellen, maar niet dubbel met meterstanden
+  const uUse = new Map(), uCov = new Map(), seen = new Set();
+  for (const x of usage) {
+    if (seen.has(x.t)) continue;
+    seen.add(x.t);
+    const k = dkey(x.t);
+    if (cov.has(k)) continue;
+    if (x.v < 0 || x.v > 3 * x.dur / HOUR + 1) { bad.add(k); continue; }
+    uUse.set(k, (uUse.get(k) || 0) + x.v);
+    uCov.set(k, (uCov.get(k) || 0) + x.dur);
+  }
+  for (const [k, c] of uCov) { use.set(k, uUse.get(k)); cov.set(k, c); }
   const days = new Map();
   let incomplete = 0;
   for (const [k, c] of cov) {
@@ -593,28 +670,30 @@ function scatter(host, groups, m) {
 async function addFiles(list) {
   for (const file of list) {
     const text = typeof file.text === "function" ? await file.text() : file.content;
-    const res = parseFile(text);
-    state.files.push({ name: file.name, kind: res.kind, n: res.readings ? res.readings.length : 0 });
-    if (res.kind === "gas") state.readings.push(...res.readings);
+    const res = parseFile(text, file.name);
+    const rows = res.readings || res.usage || [];
+    state.files.push({ name: file.name, kind: res.kind, n: rows.length, source: res.source, unit: res.unit, cumulative: res.cumulative });
+    if (res.readings) state.readings.push(...res.readings);
+    if (res.usage) state.usage.push(...res.usage);
   }
   renderFiles();
-  if (state.readings.length) { track("upload"); analyseData(); }
+  if (state.readings.length || state.usage.length) { track("upload-" + (state.files.some(f => f.source === "Toon") ? "toon" : "csv")); analyseData(); }
 }
 function renderFiles() {
   const label = { gas: "gas", stroom: "stroom (nog niet gebruikt)", onbekend: "niet herkend", leeg: "leeg" };
   $("#filelist").innerHTML = state.files.map(f =>
-    `<div><span>${esc(f.name)}</span><span>${label[f.kind]}${f.n ? ` · ${fmt(f.n)} regels` : ""}</span></div>`).join("");
+    `<div><span>${esc(f.name)}</span><span>${label[f.kind]}${f.kind === "gas" ? ` (${f.cumulative ? "meterstand" : "verbruik"}${f.unit === "liter" ? ", in liters" : ""})` : ""}${f.n ? ` · ${fmt(f.n)} regels` : ""}</span></div>`).join("");
 }
 
 /* ============================================================ stap 2: controle */
 function analyseData() {
-  const d = toDaily(state.readings);
+  const d = toDaily(state.readings, state.usage);
   state.daily = d;
   const s2 = $("#s2"); s2.classList.remove("locked");
   if (!d.keys.length) {
     $("#facts").innerHTML = "";
     $("#chart-month").innerHTML = "";
-    $("#checks").innerHTML = notice("warn", "Geen bruikbare dagen gevonden. Controleer of dit een export van het gasverbruik is.");
+    $("#checks").innerHTML = notice("warn", "Geen bruikbare dagen gevonden. Controleer of dit een export van het gasverbruik is (meterstand of verbruik per dag of uur).");
     return;
   }
   const span = (Date.parse(d.last) - Date.parse(d.first)) / DAY + 1;
