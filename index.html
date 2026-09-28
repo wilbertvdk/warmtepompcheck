@@ -285,7 +285,9 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
 <footer>
   <p>Onderzoeksprototype, geen commercieel product en geen installatieadvies. Een installateur hoort het vermogen altijd te controleren met een warmteverliesberekening.</p>
   <p>Weerdata: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0).</p>
+  <p>Privacy: je verbruik verlaat je apparaat niet. We tellen anoniem hoe vaak de pagina bezocht en gebruikt wordt, met <a href="https://www.goatcounter.com" target="_blank" rel="noopener">GoatCounter</a>: zonder cookies en zonder persoonsgegevens. <a href="https://docs.google.com/forms/d/1Bvd4QsMGuZBhYRDQXadeJUgTok-_Zs2IxI_n1I2AM6A/viewform" target="_blank" rel="noopener">Feedback geven</a></p>
 </footer>
+<script data-goatcounter="https://wilniuswarmtepomp.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 </div>
 
 <script>
@@ -296,7 +298,12 @@ const HOUR = 3600e3, DAY = 24 * HOUR;
 const NORM_YEARS = 10;        // "normaal jaar" = gemiddelde van de laatste 10 hele jaren
 const HP_AVAIL = 0.85;        // deel van de dag dat de warmtepomp op vol vermogen kan leveren (ontdooien, pieken)
 const COOK_M3_DAY = 0.10;     // gas om te koken per dag, als iemand op gas kookt
-const FEEDBACK_URL = "";      // link naar het feedbackformulier (bv. een Google Form); leeg = nog niet
+const FEEDBACK_URL = "https://docs.google.com/forms/d/1Bvd4QsMGuZBhYRDQXadeJUgTok-_Zs2IxI_n1I2AM6A/viewform";
+
+// Anonieme telling via GoatCounter (geen cookies). Alleen wát er gebeurt, nooit verbruiksdata.
+function track(name) {
+  try { window.goatcounter && window.goatcounter.count && window.goatcounter.count({ path: name, title: name, event: true }); } catch (e) {}
+}
 const MONTHS = ["jan","feb","mrt","apr","mei","jun","jul","aug","sep","okt","nov","dec"];
 
 const $ = s => document.querySelector(s);
@@ -591,7 +598,7 @@ async function addFiles(list) {
     if (res.kind === "gas") state.readings.push(...res.readings);
   }
   renderFiles();
-  if (state.readings.length) analyseData();
+  if (state.readings.length) { track("upload"); analyseData(); }
 }
 function renderFiles() {
   const label = { gas: "gas", stroom: "stroom (nog niet gebruikt)", onbekend: "niet herkend", leeg: "leeg" };
@@ -710,6 +717,7 @@ async function calculate(ev) {
     const winters = perWinter(before, m);
     state.result = { m, pts, before, after, norm, winters, o };
     renderReport();
+    track("rapport-" + o.mode);
     $("#calcMsg").textContent = "";
     $("#report").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   } catch (e) {
@@ -783,14 +791,15 @@ function renderReport() {
     <p>Dit is een onderzoeksprototype. Klopt de uitkomst met wat je installateur of je warmtepomp zegt? Was iets onduidelijk? Je feedback helpt de methode te verbeteren.</p>
     <p class="muted">Wil je je kerngetallen delen? Kopieer dan deze regel en plak hem in het formulier. Er staat geen verbruik per dag, adres of naam in.</p>
     <div class="row"><code id="summaryLine" style="user-select:all;background:var(--bg);padding:8px 10px;border-radius:8px;overflow-wrap:anywhere">${esc(summaryLine())}</code><button type="button" class="ghost" id="copyBtn">Kopieer</button></div>
-    <div class="row">${FEEDBACK_URL ? `<a class="btn" href="${FEEDBACK_URL}" target="_blank" rel="noopener" style="text-decoration:none">Geef feedback</a>` : `<span class="muted">Het feedbackformulier komt binnenkort.</span>`}</div>
+    <div class="row">${FEEDBACK_URL ? `<a class="btn" id="fbLink" href="${FEEDBACK_URL}" target="_blank" rel="noopener" style="text-decoration:none">Geef feedback</a>` : `<span class="muted">Het feedbackformulier komt binnenkort.</span>`}</div>
   </div>`;
   R.innerHTML = html;
 
   const groups = [{ name: "vóór", color: "var(--gas)", pts: before }];
   if (after.length) groups.push({ name: "met warmtepomp", color: "var(--hp)", pts: after });
   scatter($("#c-scatter"), groups, m);
-  $("#printBtn").onclick = () => window.print();
+  $("#printBtn").onclick = () => { track("pdf"); window.print(); };
+  if ($("#fbLink")) $("#fbLink").onclick = () => track("feedback-klik");
   $("#copyBtn").onclick = () => {
     const t = $("#summaryLine").textContent;
     navigator.clipboard.writeText(t).then(() => { $("#copyBtn").textContent = "Gekopieerd"; }, () => {
