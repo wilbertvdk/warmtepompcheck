@@ -173,7 +173,7 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
 <header class="top">
   <span class="tag">Onderzoeksprototype</span>
   <h1>Warmtepompcheck</h1>
-  <p class="lede">Upload het gasverbruik van je slimme meter (HomeWizard of Toon). Je ziet hoeveel warmte je huis verliest per graad dat het buiten kouder wordt, welk vermogen een warmtepomp nodig heeft, en wat hij ongeveer bespaart.</p>
+  <p class="lede">Upload het gasverbruik van je slimme meter (HomeWizard, Toon of Bosch EasyControl). Je ziet hoeveel warmte je huis verliest per graad dat het buiten kouder wordt, welk vermogen een warmtepomp nodig heeft, en wat hij ongeveer bespaart.</p>
   <ul class="promises">
     <li>Je verbruik blijft op je eigen apparaat</li>
     <li>Gratis, geen account</li>
@@ -187,7 +187,7 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
   <div class="step-body" style="display:grid;gap:16px">
     <label class="drop" id="drop" tabindex="0" for="files">
       <strong>Sleep je bestanden hierheen</strong>
-      <span class="muted">of tik om ze te kiezen · HomeWizard- of Toon-export (.csv of .json), meerdere bestanden mag</span>
+      <span class="muted">of tik om ze te kiezen · export van HomeWizard, Toon of Bosch EasyControl (.csv of .json), meerdere bestanden mag</span>
       <input type="file" id="files" accept=".csv,.json,.txt,text/csv,application/json" multiple>
     </label>
     <div class="row">
@@ -203,6 +203,15 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
         <li>Heb je kwartierwaarden (max. 365 dagen per bestand)? Upload dan alle jaarbestanden tegelijk.</li>
       </ol>
       <p class="muted" style="margin-top:8px">Nodig: minstens één winter, liefst een paar jaar. De bestanden heten meestal <code>P1g-…csv</code>. Stroombestanden (<code>P1e-…</code>) worden nu nog niet gebruikt.</p>
+    </details>
+    <details>
+      <summary>Zo exporteer je je gasverbruik uit de Bosch EasyControl-app</summary>
+      <ol>
+        <li>Open de EasyControl-app en ga naar <b>Energie</b>.</li>
+        <li>Tik op het <b>tandwieltje</b>; je komt bij <b>Prijzen en doelen</b>.</li>
+        <li>Tik op <b>Exporteren</b>. Je krijgt een zip-bestand; open het en upload het bestand <code>Energiegegevens.csv</code>.</li>
+      </ol>
+      <p class="muted" style="margin-top:8px">De ketel meet het gas voor verwarming en warm water apart, in kWh. Heb je een hybride warmtepomp op dezelfde ketel, dan leest de check ook de stroom en warmte van de warmtepomp en vult hij de startdatum zelf in.</p>
     </details>
     <details>
       <summary>Zo haal je je gasverbruik uit een Toon</summary>
@@ -257,7 +266,7 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
         <span class="hint">Het warmteverlies wordt dan berekend uit de periode ervoor. Daarna vergelijken we wat je zonder warmtepomp had verbruikt met wat je echt verbruikte.</span>
       </div>
 
-      <div class="field">
+      <div class="field" id="cookField">
         <span class="lab">Kook je op gas?</span>
         <div class="choices">
           <label><input type="radio" name="cook" value="1" checked> Ja</label>
@@ -322,7 +331,7 @@ const eur = v => (v < 0 ? "−" : "") + "€ " + fmt(Math.abs(v), 0);
 const dkey = t => new Date(t).toISOString().slice(0, 10);   // tijden staan als 'UTC' opgeslagen = lokale kloktijd
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-const state = { files: [], readings: [], usage: [], daily: null, place: null };
+const state = { files: [], readings: [], usage: [], hp: new Map(), noCook: false, daily: null, place: null };
 
 /* ============================================================ inlezen */
 function parseNum(s) {
@@ -385,6 +394,28 @@ function parseJson(text, name) {
   return toGas(rows, "Toon");
 }
 
+/* Bosch EasyControl (Energie → tandwiel → Prijzen en doelen → Exporteren): per dag in kWh,
+   gas voor verwarming en warm water apart, en bij een (hybride) warmtepomp ook zijn stroom en warmte.
+   Koken op gas loopt niet via de ketel en zit er dus niet in. */
+function parseBosch(lines, sep, head) {
+  const col = n => head.indexOf(n.toLowerCase());
+  const ci = { ch: col("gasUsageCentralHeating_Boiler"), hw: col("gasUsageHotWater_Boiler"),
+               eCh: col("electricityUsageCentralHeating_Heatpump"), eHw: col("electricityUsedHotWater_Heatpump"),
+               qCh: col("electricityProducedCentralHeating_Heatpump"), qHw: col("electricityProducedHotWater_Heatpump") };
+  const val = (c, i) => i < 0 ? NaN : parseNum(c[i]);
+  const usage = [], hp = [];
+  for (let i = 1; i < lines.length; i++) {
+    const c = lines[i].split(sep), m = /(\d{4})(\d{2})(\d{2})/.exec(c[0] || "");
+    if (!m) continue;
+    const t = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+    const ch = val(c, ci.ch), hw = val(c, ci.hw);
+    if (isFinite(ch)) usage.push({ t, v: (ch + (isFinite(hw) ? hw : 0)) / H_GAS, dur: DAY });
+    const e = (val(c, ci.eCh) || 0) + (val(c, ci.eHw) || 0), q = (val(c, ci.qCh) || 0) + (val(c, ci.qHw) || 0);
+    if (isFinite(val(c, ci.eCh)) || isFinite(val(c, ci.qCh))) hp.push({ date: dkey(t), e, q });
+  }
+  return { kind: "gas", source: "Bosch", unit: "kWh", cumulative: false, noCook: true, usage, hp };
+}
+
 function parseFile(text, name = "") {
   text = text.replace(/^﻿/, "");
   if (/^\s*[{[]/.test(text)) return parseJson(text.trim(), name);
@@ -397,6 +428,7 @@ function parseFile(text, name = "") {
     if (/elec|stroom|power|P1e/i.test(name)) return { kind: "stroom" };
     ti = 0; gi = 1; start = 0;
   } else {
+    if (head.includes("gasusagecentralheating_boiler")) return parseBosch(lines, sep, head);
     gi = head.findIndex(h => h.includes("gas") && !/kost|€|eur|prijs|tarief/.test(h));
     if (gi < 0) return { kind: head.some(h => /import|stroom|elec|kwh/.test(h)) ? "stroom" : "onbekend" };
   }
@@ -675,14 +707,16 @@ async function addFiles(list) {
     state.files.push({ name: file.name, kind: res.kind, n: rows.length, source: res.source, unit: res.unit, cumulative: res.cumulative });
     if (res.readings) state.readings.push(...res.readings);
     if (res.usage) state.usage.push(...res.usage);
+    if (res.hp) for (const x of res.hp) state.hp.set(x.date, x);
+    if (res.noCook) state.noCook = true;
   }
   renderFiles();
-  if (state.readings.length || state.usage.length) { track("upload-" + (state.files.some(f => f.source === "Toon") ? "toon" : "csv")); analyseData(); }
+  if (state.readings.length || state.usage.length) { track("upload-" + (state.files.find(f => ["Toon", "Bosch"].includes(f.source))?.source.toLowerCase() || "csv")); analyseData(); }
 }
 function renderFiles() {
   const label = { gas: "gas", stroom: "stroom (nog niet gebruikt)", onbekend: "niet herkend", leeg: "leeg" };
   $("#filelist").innerHTML = state.files.map(f =>
-    `<div><span>${esc(f.name)}</span><span>${label[f.kind]}${f.kind === "gas" ? ` (${f.cumulative ? "meterstand" : "verbruik"}${f.unit === "liter" ? ", in liters" : ""})` : ""}${f.n ? ` · ${fmt(f.n)} regels` : ""}</span></div>`).join("");
+    `<div><span>${esc(f.name)}</span><span>${label[f.kind]}${f.kind === "gas" ? ` (${f.source === "Bosch" ? "Bosch EasyControl, kWh" : (f.cumulative ? "meterstand" : "verbruik") + (f.unit === "liter" ? ", in liters" : "")})` : ""}${f.n ? ` · ${fmt(f.n)} regels` : ""}</span></div>`).join("");
 }
 
 /* ============================================================ stap 2: controle */
@@ -721,7 +755,15 @@ function analyseData() {
   if (d.swapDays) checks.push(notice("ok", `<b>Meterwissel gevonden</b> (${d.swapDays === 1 ? "1 dag" : d.swapDays + " dagen"}). Die dag laten we weg, de rest telt gewoon mee.`));
   const missing = Math.round(span - d.keys.length);
   if (missing > 5) checks.push(notice(missing > span * 0.2 ? "warn" : "ok", `<b>${fmt(missing)} dagen ontbreken of zijn onvolledig</b> binnen de periode. Die slaan we over.`));
+  if (state.noCook) checks.push(notice("ok", "<b>Gegevens van je Bosch-ketel.</b> Die meet het gas voor verwarming en warm water, in kWh; wij rekenen dat om naar m³. Koken op gas zit er niet in, dus dat laten we ook in de berekening weg."));
+  const hpStart = [...state.hp.values()].filter(x => x.q > 0).map(x => x.date).sort()[0];
+  if (hpStart) {
+    checks.push(notice("ok", `<b>Warmtepomp gevonden.</b> Je ketel meldt warmte van een warmtepomp vanaf ${fmtDate(hpStart)}. We vullen dat hieronder in bij <i>Ik heb er al een</i>.`));
+    document.querySelector("input[name=mode][value=heb]").checked = true;
+    if (!$("#since").value) $("#since").value = hpStart;
+  }
   $("#checks").innerHTML = checks.join("");
+  $("#cookField").hidden = state.noCook;
 
   $("#s3").classList.remove("locked");
   // standaard: de dag van de eerste warmtepomp-hint leeg laten
@@ -734,7 +776,7 @@ const notice = (kind, html) => `<div class="notice ${kind}"><span class="ic">${k
 function opts() {
   return {
     mode: document.querySelector("input[name=mode]:checked").value,
-    cook: document.querySelector("input[name=cook]:checked").value === "1",
+    cook: !state.noCook && document.querySelector("input[name=cook]:checked").value === "1",
     pg: parseNum($("#pg").value) || 0, pe: parseNum($("#pe").value) || 0,
     eta: (parseNum($("#eta").value) || 90) / 100,
     tdesign: parseNum($("#tdesign").value),
@@ -963,7 +1005,7 @@ function renderAdvice() {
 }
 
 function existingBlock() {
-  const { m, before, after } = state.result;
+  const { m, before, after, o } = state.result;
   if (!after.length) return `<div class="block">${notice("warn", "Er zijn nog geen dagen na de startdatum van je warmtepomp met weerdata.")}</div>`;
   // Per kalendermaand het gemiddelde verschil tussen meting en model vóór de warmtepomp.
   // Vangt seizoenseffecten op die het eenvoudige model mist (zon in het voorjaar, kouder leidingwater in de winter).
@@ -973,16 +1015,28 @@ function existingBlock() {
   let exp = 0, act = 0;
   for (const p of after) { exp += Math.max(0, predict(m, p.T) + corr[+p.date.slice(5, 7) - 1]); act += p.g; }
   const saved = exp - act;
+  // Meet de ketel (Bosch) ook de warmtepomp zelf, dan weten we zijn stroom en warmte echt.
+  const hpDays = after.map(p => state.hp.get(p.date)).filter(Boolean);
+  const hpE = hpDays.reduce((a, x) => a + x.e, 0), hpQ = hpDays.reduce((a, x) => a + x.q, 0);
+  const measured = hpDays.length && hpE > 0 ? `
+    <p class="muted">Je ketel meet ook de warmtepomp zelf. Over dezelfde dagen:</p>
+    <div class="kpis">
+      ${kpi(fmt(hpQ), "kWh", "Warmte van de warmtepomp", `≈ ${fmt(hpQ / (H_GAS * o.eta))} m³ gas die de ketel niet hoefde te stoken`)}
+      ${kpi(fmt(hpE), "kWh", "Stroom van de warmtepomp", `gemiddeld rendement (COP) ${fmt(hpQ / hpE, 1)}`)}
+      ${kpi(eur(saved * o.pg - hpE * o.pe), "", "Netto bespaard", `${eur(saved * o.pg)} minder gas, ${eur(hpE * o.pe)} extra stroom`)}
+    </div>
+    <p class="muted">Het bespaarde gas uit het model en de warmte die de warmtepomp meldt, horen ongeveer gelijk te zijn. Wijken ze veel af, dan is de periode nog kort of veranderde er iets anders in huis.</p>`
+    : `<p class="muted">Tel je de stroom van de warmtepomp erbij (in de app van je warmtepomp, of met een aparte kWh-meter), dan weet je de echte besparing in euro's. Die rekensom komt in een volgende versie.</p>`;
   return `
   <div class="block">
     <h3>Wat je warmtepomp tot nu toe deed</h3>
     <p class="muted">Van ${fmtDate(after[0].date)} tot ${fmtDate(after[after.length - 1].date)} (${fmt(after.length)} dagen). Zonder warmtepomp had je huis bij dit weer ${fmt(exp)} m³ gas gebruikt. Die verwachting is gecorrigeerd voor het seizoen, op basis van dezelfde maanden in de jaren ervoor.</p>
     <div class="kpis">
       ${kpi(fmt(exp), "m³", "Verwacht zonder warmtepomp", "volgens jouw model en het echte weer")}
-      ${kpi(fmt(act), "m³", "Werkelijk verbruikt", "gemeten door je slimme meter")}
+      ${kpi(fmt(act), "m³", "Werkelijk verbruikt", state.noCook ? "gemeten door je ketel" : "gemeten door je slimme meter")}
       ${kpi(fmt(saved), "m³", "Bespaard gas", `${fmt(exp > 0 ? saved / exp * 100 : 0)} % minder dan verwacht`)}
     </div>
-    <p class="muted">Tel je de stroom van de warmtepomp erbij (in de app van je warmtepomp, of met een aparte kWh-meter), dan weet je de echte besparing in euro's. Die rekensom komt in een volgende versie.</p>
+    ${measured}
   </div>`;
 }
 
