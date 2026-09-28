@@ -187,7 +187,7 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
   <div class="step-body" style="display:grid;gap:16px">
     <label class="drop" id="drop" tabindex="0" for="files">
       <strong>Sleep je bestanden hierheen</strong>
-      <span class="muted">of tik om ze te kiezen · HomeWizard-export (.csv), meerdere bestanden mag</span>
+      <span class="muted">of tik om ze te kiezen · HomeWizard, Bosch/Nefit of je energieleverancier (.csv), meerdere bestanden mag</span>
       <input type="file" id="files" accept=".csv,text/csv" multiple>
     </label>
     <div class="row">
@@ -195,14 +195,19 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
     </div>
     <div class="filelist" id="filelist"></div>
     <details>
-      <summary>Zo exporteer je je gasverbruik uit de HomeWizard-app</summary>
+      <summary>Welke bestanden werken, en hoe kom je eraan?</summary>
+      <p style="margin-top:10px"><b>HomeWizard P1-meter</b></p>
       <ol>
         <li>Open de HomeWizard Energy-app. Exporteren vraagt het abonnement Energy+ (€ 0,99 per maand, per maand opzegbaar).</li>
         <li>Ga naar <b>Instellingen → Grafieken</b> en kies de gasgrafiek van je P1-meter.</li>
         <li>Kies <b>Grafiekdata exporteren</b>, resolutie <b>per dag</b>, en de langste periode die je hebt. Dagwaarden zijn genoeg.</li>
         <li>Heb je kwartierwaarden (max. 365 dagen per bestand)? Upload dan alle jaarbestanden tegelijk.</li>
       </ol>
-      <p class="muted" style="margin-top:8px">Nodig: minstens één winter, liefst een paar jaar. De bestanden heten meestal <code>P1g-…csv</code>. Stroombestanden (<code>P1e-…</code>) worden nu nog niet gebruikt.</p>
+      <p style="margin-top:10px"><b>Bosch of Nefit cv-ketel of hybride</b> (HomeCom Easy, EasyControl)</p>
+      <p class="muted">Exporteer in de app de energiegegevens als csv (het bestand heet meestal <code>Energiegegevens.csv</code>). De ketel schat zijn gasverbruik zelf; we rekenen met 9,5 kWh per m³.</p>
+      <p style="margin-top:10px"><b>Je energieleverancier</b></p>
+      <p class="muted">Download in je online omgeving je gasverbruik per uur of per dag als <b>csv</b>, bijvoorbeeld bij Frank Energie. Excel-bestanden (.xlsx) werken nog niet: sla ze eerst op als csv.</p>
+      <p class="muted" style="margin-top:8px">Nodig: minstens één winter, liefst een paar jaar. Je kunt bestanden uit verschillende bronnen tegelijk uploaden. Stroombestanden worden nog niet gebruikt. Werkt jouw bestand niet? Laat via het feedbackformulier weten van welke app of leverancier het komt, dan kijken we of we het kunnen toevoegen.</p>
     </details>
   </div>
 </section>
@@ -312,7 +317,7 @@ const eur = v => (v < 0 ? "−" : "") + "€ " + fmt(Math.abs(v), 0);
 const dkey = t => new Date(t).toISOString().slice(0, 10);   // tijden staan als 'UTC' opgeslagen = lokale kloktijd
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-const state = { files: [], readings: [], daily: null, place: null };
+const state = { files: [], readings: [], dayMaps: [], daily: null, place: null };
 
 /* ============================================================ inlezen */
 function parseNum(s) {
@@ -327,20 +332,67 @@ function parseTime(s) {
   if (!m) return null;
   return Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0));
 }
+/* Herkende formaten (op de kopregel). Elk formaat levert óf meterstanden (readings: {t, v})
+   óf verbruik per dag (days: Map "JJJJ-MM-DD" -> m³).
+   - HomeWizard: time,Total gas used (meterstand, per kwartier of per dag)
+   - Bosch/Nefit (HomeCom, EasyControl "Energiegegevens"): per dag gas in kWh, cv + warm water
+   - Energieleverancier (bv. Frank Energie): Datum + "Verbruik in m3", per uur of per dag */
+const BOSCH_KWH_PER_M3 = 9.5;   // Bosch rekent gas om naar kWh; tegen een P1-meter gemeten: ~9,5 kWh per m³
+function splitCsv(line, sep) { return line.split(sep).map(c => c.replace(/"/g, "").trim()); }
+function parseDate(s) {
+  let m = /^(\d{4})(\d{2})(\d{2})$/.exec(s);                     // 20260315
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);                     // 2026-03-15
+  if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  m = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/.exec(s);               // 15-03-2026
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return null;
+}
 function parseFile(text) {
-  const lines = text.replace(/^﻿/, "").split(/\r?\n/).filter(l => l.trim());
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return { kind: "leeg" };
   const sep = lines[0].split(";").length > lines[0].split(",").length ? ";" : ",";
-  const head = lines[0].split(sep).map(h => h.replace(/"/g, "").trim().toLowerCase());
-  const gi = head.findIndex(h => h.includes("gas"));
-  if (gi < 0) return { kind: head.some(h => h.includes("import")) ? "stroom" : "onbekend" };
-  const out = [];
-  for (let i = 1; i < lines.length; i++) {
-    const c = lines[i].split(sep);
-    const t = parseTime(c[0]), v = parseNum(c[gi]);
-    if (t != null && isFinite(v)) out.push({ t, v });
+  const head = splitCsv(lines[0], sep).map(h => h.toLowerCase());
+  const rows = lines.slice(1).map(l => splitCsv(l, sep));
+
+  // Bosch / Nefit
+  const bCh = head.indexOf("gasusagecentralheating_boiler"), bDhw = head.indexOf("gasusagehotwater_boiler");
+  if (bCh >= 0) {
+    const days = new Map();
+    for (const c of rows) {
+      const k = parseDate(c[0]), ch = parseNum(c[bCh]), dhw = bDhw >= 0 ? parseNum(c[bDhw]) : 0;
+      if (k && isFinite(ch)) days.set(k, (ch + (isFinite(dhw) ? dhw : 0)) / BOSCH_KWH_PER_M3);
+    }
+    return { kind: "bosch", days, n: rows.length };
   }
-  return { kind: "gas", readings: out };
+
+  // Energieleverancier: datumkolom + verbruik in m³
+  const di = head.findIndex(h => h === "datum" || h === "date" || h.startsWith("datum"));
+  const vi = head.findIndex(h => /(m3|m³)/.test(h) && /(verbruik|gas|usage)/.test(h));
+  if (di >= 0 && vi >= 0) {
+    const sum = new Map(), cnt = new Map();
+    for (const c of rows) {
+      const k = parseDate(c[di]), v = parseNum(c[vi]);
+      if (!k || !isFinite(v) || v < 0) continue;
+      sum.set(k, (sum.get(k) || 0) + v); cnt.set(k, (cnt.get(k) || 0) + 1);
+    }
+    const perDay = Math.max(...cnt.values());              // 1 = dagwaarden, 24 = uurwaarden
+    const days = new Map();
+    for (const [k, v] of sum) if (cnt.get(k) >= Math.floor(perDay * 0.9)) days.set(k, v);
+    return { kind: perDay > 1 ? "leverancier-uur" : "leverancier-dag", days, n: rows.length };
+  }
+
+  // HomeWizard: meterstanden
+  const gi = head.findIndex(h => h.includes("gas"));
+  if (gi >= 0) {
+    const out = [];
+    for (const c of rows) {
+      const t = parseTime(c[0]), v = parseNum(c[gi]);
+      if (t != null && isFinite(v)) out.push({ t, v });
+    }
+    return { kind: "gas", readings: out, n: out.length };
+  }
+  return { kind: head.some(h => h.includes("import") || h.includes("kwh")) ? "stroom" : "onbekend" };
 }
 
 /* Meterstanden -> verbruik per dag. Een dag telt alleen mee als hij (bijna) helemaal
@@ -594,21 +646,37 @@ async function addFiles(list) {
   for (const file of list) {
     const text = typeof file.text === "function" ? await file.text() : file.content;
     const res = parseFile(text);
-    state.files.push({ name: file.name, kind: res.kind, n: res.readings ? res.readings.length : 0 });
-    if (res.kind === "gas") state.readings.push(...res.readings);
+    state.files.push({ name: file.name, kind: res.kind, n: res.n || 0 });
+    if (res.readings) state.readings.push(...res.readings);
+    if (res.days) state.dayMaps.push(res.days);
   }
   renderFiles();
-  if (state.readings.length) { track("upload"); analyseData(); }
+  if (state.readings.length || state.dayMaps.length) {
+    track("upload-" + [...new Set(state.files.map(f => f.kind))].join("+"));
+    analyseData();
+  }
 }
 function renderFiles() {
-  const label = { gas: "gas", stroom: "stroom (nog niet gebruikt)", onbekend: "niet herkend", leeg: "leeg" };
+  const label = { gas: "gas (HomeWizard)", bosch: "gas (Bosch/Nefit, per dag)", "leverancier-uur": "gas (leverancier, per uur)",
+                  "leverancier-dag": "gas (leverancier, per dag)", stroom: "stroom (nog niet gebruikt)", onbekend: "niet herkend", leeg: "leeg" };
   $("#filelist").innerHTML = state.files.map(f =>
     `<div><span>${esc(f.name)}</span><span>${label[f.kind]}${f.n ? ` · ${fmt(f.n)} regels` : ""}</span></div>`).join("");
 }
 
 /* ============================================================ stap 2: controle */
+// Alle bronnen samenvoegen tot één reeks per dag. Bij overlap wint de fijnste bron
+// (HomeWizard-meterstanden), daarna de bestanden in volgorde van uploaden.
+function combineDaily() {
+  const d = state.readings.length ? toDaily(state.readings)
+    : { days: new Map(), swapDays: 0, badDays: 0, incomplete: 0, resolution: DAY };
+  for (const m of state.dayMaps) for (const [k, v] of m) if (!d.days.has(k)) d.days.set(k, v);
+  d.keys = [...d.days.keys()].sort();
+  d.first = d.keys[0]; d.last = d.keys[d.keys.length - 1];
+  if (!state.readings.length) d.resolution = state.files.some(f => f.kind === "leverancier-uur") ? HOUR : DAY;
+  return d;
+}
 function analyseData() {
-  const d = toDaily(state.readings);
+  const d = combineDaily();
   state.daily = d;
   const s2 = $("#s2"); s2.classList.remove("locked");
   if (!d.keys.length) {
@@ -619,7 +687,7 @@ function analyseData() {
   }
   const span = (Date.parse(d.last) - Date.parse(d.first)) / DAY + 1;
   const total = [...d.days.values()].reduce((a, b) => a + b, 0);
-  const res = d.resolution <= HOUR ? `${Math.round(d.resolution / 60e3)} minuten` : "per dag";
+  const res = d.resolution < HOUR ? `${Math.round(d.resolution / 60e3)} minuten` : d.resolution === HOUR ? "per uur" : "per dag";
   $("#facts").innerHTML = [
     [fmtDate(d.first) + " –<br>" + fmtDate(d.last), "periode"],
     [fmt(d.keys.length), "bruikbare dagen"],
@@ -913,7 +981,7 @@ const drop = $("#drop"), inp = $("#files");
 // Eigen bestanden na het voorbeeldhuis: eerst het voorbeeld wissen, anders lopen de data door elkaar
 function leaveDemo() {
   if (!state.demo) return;
-  Object.assign(state, { demo: false, files: [], readings: [], daily: null });
+  Object.assign(state, { demo: false, files: [], readings: [], dayMaps: [], daily: null });
   $("#report").hidden = true; $("#report").innerHTML = "";
   $("#demo").disabled = false;
 }
