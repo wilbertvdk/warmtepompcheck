@@ -1,0 +1,926 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Warmtepompcheck</title>
+<meta name="description" content="Bereken uit je eigen gasverbruik hoeveel warmte je huis verliest per graad, en welke warmtepomp daarbij past.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Public+Sans:wght@400;500;600&display=swap">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #F5F7F6;
+  --surface: #FFFFFF;
+  --ink: #15201E;
+  --ink-2: #4A5856;
+  --ink-3: #75817F;
+  --line: #DCE3E1;
+  --line-2: #EBF0EE;
+  --accent: #0B6E66;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #E3F1EF;
+  --gas: #C8561E;
+  --hp: #008C80;
+  --warn-bg: #FFF4DC;
+  --warn-ink: #7A4B00;
+  --ok-bg: #E5F4EA;
+  --ok-ink: #1E5E33;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --body: "Public Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #111716; --surface: #182120; --ink: #E7EEEC; --ink-2: #AEBBB8; --ink-3: #82908D;
+    --line: #2B3634; --line-2: #212B29; --accent: #3FB3A7; --accent-ink: #0B1413; --accent-soft: #1C302D;
+    --gas: #D96E36; --hp: #1FA195;
+    --warn-bg: #3A2C10; --warn-ink: #F3CF85; --ok-bg: #173323; --ok-ink: #9ED9AF;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111716; --surface: #182120; --ink: #E7EEEC; --ink-2: #AEBBB8; --ink-3: #82908D;
+  --line: #2B3634; --line-2: #212B29; --accent: #3FB3A7; --accent-ink: #0B1413; --accent-soft: #1C302D;
+  --gas: #D96E36; --hp: #1FA195;
+  --warn-bg: #3A2C10; --warn-ink: #F3CF85; --ok-bg: #173323; --ok-ink: #9ED9AF;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.55 var(--body);
+  padding: 0 16px;
+}
+.wrap { max-width: 880px; margin: 0 auto; padding-block: 32px 64px; display: grid; gap: 28px; }
+h1, h2, h3 { font-family: var(--display); line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2rem, 5vw, 2.8rem); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.45rem; font-weight: 700; }
+h3 { font-size: 1.08rem; font-weight: 700; }
+p { margin: 0; max-width: 65ch; }
+.lede { font-size: 1.12rem; color: var(--ink-2); }
+.muted { color: var(--ink-3); font-size: 0.9rem; }
+.num { font-variant-numeric: tabular-nums; }
+a { color: var(--accent); }
+
+header.top { display: grid; gap: 12px; }
+.tag { font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+.promises { display: flex; flex-wrap: wrap; gap: 8px 20px; padding: 0; margin: 4px 0 0; list-style: none; color: var(--ink-2); font-size: 0.95rem; }
+.promises li::before { content: "✓"; color: var(--accent); font-weight: 700; margin-right: 6px; }
+
+section.step { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 24px; display: grid; gap: 16px; }
+.step-head { display: flex; align-items: baseline; gap: 12px; }
+.step-no { font-family: var(--display); font-weight: 700; color: var(--accent); font-size: 1.05rem; min-width: 1.4em; }
+section.step.locked { opacity: 0.5; }
+section.step.locked .step-body { display: none; }
+
+.drop {
+  border: 2px dashed var(--line); border-radius: 12px; padding: 28px 16px; text-align: center;
+  display: grid; gap: 10px; justify-items: center; cursor: pointer; transition: border-color .15s, background .15s;
+}
+.drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.drop strong { font-size: 1.05rem; }
+input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+button, .btn {
+  font: 600 0.98rem var(--body); border-radius: 10px; padding: 10px 18px; cursor: pointer;
+  border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
+}
+button.ghost { background: transparent; color: var(--accent); }
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible, input:focus-visible, select:focus-visible, .drop:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+details { border-top: 1px solid var(--line-2); padding-top: 12px; }
+summary { cursor: pointer; font-weight: 600; color: var(--ink-2); }
+details ol { margin: 10px 0 0; padding-left: 1.3em; color: var(--ink-2); display: grid; gap: 4px; max-width: 65ch; }
+
+.filelist { display: grid; gap: 6px; font-size: 0.92rem; }
+.filelist div { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line-2); padding-bottom: 4px; }
+.filelist span:last-child { color: var(--ink-3); text-align: right; }
+
+.notice { border-radius: 10px; padding: 12px 14px; font-size: 0.95rem; display: flex; gap: 10px; align-items: flex-start; }
+.notice.warn { background: var(--warn-bg); color: var(--warn-ink); }
+.notice.ok { background: var(--ok-bg); color: var(--ok-ink); }
+.notice b { font-weight: 700; }
+.notice .ic { font-weight: 700; flex: none; }
+
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.fact { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 2px; }
+.fact .v { font-family: var(--display); font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.fact .l { color: var(--ink-3); font-size: 0.85rem; }
+
+form.q { display: grid; gap: 18px; }
+.field { display: grid; gap: 6px; }
+.field > label, .field > .lab { font-weight: 600; }
+.field .hint { color: var(--ink-3); font-size: 0.88rem; }
+input[type=text], input[type=number], input[type=date], select {
+  font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; max-width: 100%;
+}
+input[type=number] { width: 8em; }
+.choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.choices label { border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px; cursor: pointer; display: flex; gap: 8px; align-items: center; }
+.choices label:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.places { display: flex; flex-wrap: wrap; gap: 6px; }
+.places button { background: transparent; color: var(--ink); border-color: var(--line); font-weight: 500; padding: 6px 12px; }
+.places button[aria-pressed=true] { border-color: var(--accent); background: var(--accent-soft); }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+
+/* Rapport */
+#report { display: grid; gap: 28px; }
+.hero { display: grid; gap: 18px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 4px; align-content: start; }
+.kpi .v { font-family: var(--display); font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.kpi .v small { font-size: 0.95rem; font-weight: 500; color: var(--ink-2); margin-left: 3px; }
+.kpi .l { font-weight: 600; }
+.kpi .d { color: var(--ink-3); font-size: 0.86rem; }
+.block { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px; display: grid; gap: 14px; }
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart text { fill: var(--ink-3); font: 11px var(--body); font-variant-numeric: tabular-nums; }
+.chart .gridl { stroke: var(--line-2); stroke-width: 1; }
+.chart .axis { stroke: var(--line); stroke-width: 1; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.88rem; color: var(--ink-2); }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); font-size: 0.82rem; padding: 6px 9px; border-radius: 7px; white-space: nowrap; transform: translate(-50%, -115%); z-index: 3; font-variant-numeric: tabular-nums; }
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 0.93rem; }
+th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--ink-3); font-weight: 600; font-size: 0.82rem; }
+tr.sel td { background: var(--accent-soft); font-weight: 600; }
+.sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+.sliders label { display: grid; gap: 4px; font-size: 0.9rem; color: var(--ink-2); }
+.sliders output { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.big-save { font-family: var(--display); font-size: 2.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+ul.plain { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 70ch; color: var(--ink-2); }
+footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
+.spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: sp .8s linear infinite; vertical-align: -2px; }
+@keyframes sp { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } * { transition: none !important; } }
+@media print {
+  body { background: #fff; padding: 0; }
+  .noprint, section.step { display: none !important; }
+  .block, .kpi { break-inside: avoid; border-color: #ccc; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <span class="tag">Onderzoeksprototype</span>
+  <h1>Warmtepompcheck</h1>
+  <p class="lede">Upload het gasverbruik van je slimme meter. Je ziet hoeveel warmte je huis verliest per graad dat het buiten kouder wordt, welk vermogen een warmtepomp nodig heeft, en wat hij ongeveer bespaart.</p>
+  <ul class="promises">
+    <li>Je verbruik blijft op je eigen apparaat</li>
+    <li>Gratis, geen account</li>
+    <li>Ongeveer 2 minuten</li>
+  </ul>
+</header>
+
+<!-- Stap 1 -->
+<section class="step" id="s1">
+  <div class="step-head"><span class="step-no">1</span><h2>Upload je gasverbruik</h2></div>
+  <div class="step-body" style="display:grid;gap:16px">
+    <label class="drop" id="drop" tabindex="0" for="files">
+      <strong>Sleep je bestanden hierheen</strong>
+      <span class="muted">of tik om ze te kiezen · HomeWizard-export (.csv), meerdere bestanden mag</span>
+      <input type="file" id="files" accept=".csv,text/csv" multiple>
+    </label>
+    <div class="row">
+      <button type="button" class="ghost" id="demo" hidden>Probeer met voorbeelddata</button>
+    </div>
+    <div class="filelist" id="filelist"></div>
+    <details>
+      <summary>Zo exporteer je je gasverbruik uit de HomeWizard-app</summary>
+      <ol>
+        <li>Open de HomeWizard Energy-app. Exporteren vraagt het abonnement Energy+ (€ 0,99 per maand, per maand opzegbaar).</li>
+        <li>Ga naar <b>Instellingen → Grafieken</b> en kies de gasgrafiek van je P1-meter.</li>
+        <li>Kies <b>Grafiekdata exporteren</b>, resolutie <b>per dag</b>, en de langste periode die je hebt. Dagwaarden zijn genoeg.</li>
+        <li>Heb je kwartierwaarden (max. 365 dagen per bestand)? Upload dan alle jaarbestanden tegelijk.</li>
+      </ol>
+      <p class="muted" style="margin-top:8px">Nodig: minstens één winter, liefst een paar jaar. De bestanden heten meestal <code>P1g-…csv</code>. Stroombestanden (<code>P1e-…</code>) worden nu nog niet gebruikt.</p>
+    </details>
+  </div>
+</section>
+
+<!-- Stap 2 -->
+<section class="step locked" id="s2">
+  <div class="step-head"><span class="step-no">2</span><h2>Controle van je data</h2></div>
+  <div class="step-body" style="display:grid;gap:16px">
+    <div class="facts" id="facts"></div>
+    <div class="chart" id="chart-month"></div>
+    <div id="checks" style="display:grid;gap:8px"></div>
+  </div>
+</section>
+
+<!-- Stap 3 -->
+<section class="step locked" id="s3">
+  <div class="step-head"><span class="step-no">3</span><h2>Een paar vragen</h2></div>
+  <div class="step-body">
+    <form class="q" id="qform">
+      <div class="field">
+        <label for="place">Woonplaats of postcode (4 cijfers)</label>
+        <div class="row">
+          <input type="text" id="place" placeholder="bijv. Amersfoort of 3811" autocomplete="address-level2">
+          <button type="button" class="ghost" id="placeBtn">Zoek</button>
+        </div>
+        <div class="places" id="places"></div>
+        <span class="hint">Voor het weer bij jou in de buurt. Alleen de plaats gaat naar de weerdienst (Open-Meteo), je verbruik niet.</span>
+      </div>
+
+      <div class="field">
+        <span class="lab">Wat wil je weten?</span>
+        <div class="choices">
+          <label><input type="radio" name="mode" value="hybride" checked> Hybride warmtepomp</label>
+          <label><input type="radio" name="mode" value="volledig"> Volledig elektrisch</label>
+          <label><input type="radio" name="mode" value="heb"> Ik heb er al een</label>
+        </div>
+      </div>
+
+      <div class="field" id="sinceField" hidden>
+        <label for="since">In gebruik sinds</label>
+        <input type="date" id="since">
+        <span class="hint">Het warmteverlies wordt dan berekend uit de periode ervoor. Daarna vergelijken we wat je zonder warmtepomp had verbruikt met wat je echt verbruikte.</span>
+      </div>
+
+      <div class="field">
+        <span class="lab">Kook je op gas?</span>
+        <div class="choices">
+          <label><input type="radio" name="cook" value="1" checked> Ja</label>
+          <label><input type="radio" name="cook" value="0"> Nee</label>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="field">
+          <label for="pg">Gasprijs (€ per m³, alles inbegrepen)</label>
+          <input type="number" id="pg" step="0.01" min="0" value="1.40">
+        </div>
+        <div class="field">
+          <label for="pe">Stroomprijs (€ per kWh, alles inbegrepen)</label>
+          <input type="number" id="pe" step="0.01" min="0" value="0.27">
+        </div>
+      </div>
+
+      <details>
+        <summary>Aannames aanpassen</summary>
+        <div class="grid2" style="margin-top:12px">
+          <div class="field"><label for="eta">Rendement cv-ketel (%)</label><input type="number" id="eta" min="60" max="100" value="90"><span class="hint">HR-ketel in de praktijk: 85–92 %.</span></div>
+          <div class="field"><label for="tdesign">Ontwerptemperatuur (°C)</label><input type="number" id="tdesign" value="-10"><span class="hint">De koudste dag waarvoor je het vermogen bepaalt.</span></div>
+        </div>
+      </details>
+
+      <div class="row"><button type="submit" id="calc" disabled>Bereken</button><span id="calcMsg" class="muted"></span></div>
+    </form>
+  </div>
+</section>
+
+<!-- Rapport -->
+<div id="report" hidden></div>
+
+<footer>
+  <p>Onderzoeksprototype, geen commercieel product en geen installatieadvies. Een installateur hoort het vermogen altijd te controleren met een warmteverliesberekening.</p>
+  <p>Weerdata: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0).</p>
+</footer>
+</div>
+
+<script>
+"use strict";
+/* ============================================================ constanten */
+const H_GAS = 9.769;          // kWh per m³ aardgas (bovenwaarde, Groningen-kwaliteit)
+const HOUR = 3600e3, DAY = 24 * HOUR;
+const NORM_YEARS = 10;        // "normaal jaar" = gemiddelde van de laatste 10 hele jaren
+const HP_AVAIL = 0.85;        // deel van de dag dat de warmtepomp op vol vermogen kan leveren (ontdooien, pieken)
+const COOK_M3_DAY = 0.10;     // gas om te koken per dag, als iemand op gas kookt
+const FEEDBACK_URL = "";      // link naar het feedbackformulier (bv. een Google Form); leeg = nog niet
+const MONTHS = ["jan","feb","mrt","apr","mei","jun","jul","aug","sep","okt","nov","dec"];
+
+const $ = s => document.querySelector(s);
+const fmt = (v, d = 0) => v == null || !isFinite(v) ? "–" : v.toLocaleString("nl-NL", { minimumFractionDigits: d, maximumFractionDigits: d });
+const eur = v => (v < 0 ? "−" : "") + "€ " + fmt(Math.abs(v), 0);
+const dkey = t => new Date(t).toISOString().slice(0, 10);   // tijden staan als 'UTC' opgeslagen = lokale kloktijd
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const state = { files: [], readings: [], daily: null, place: null };
+
+/* ============================================================ inlezen */
+function parseNum(s) {
+  if (s == null) return NaN;
+  s = s.replace(/"/g, "").trim();
+  if (!s) return NaN;
+  if (s.includes(",") && !s.includes(".")) s = s.replace(",", ".");
+  return parseFloat(s);
+}
+function parseTime(s) {
+  const m = /(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?/.exec(s || "");
+  if (!m) return null;
+  return Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0));
+}
+function parseFile(text) {
+  const lines = text.replace(/^﻿/, "").split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return { kind: "leeg" };
+  const sep = lines[0].split(";").length > lines[0].split(",").length ? ";" : ",";
+  const head = lines[0].split(sep).map(h => h.replace(/"/g, "").trim().toLowerCase());
+  const gi = head.findIndex(h => h.includes("gas"));
+  if (gi < 0) return { kind: head.some(h => h.includes("import")) ? "stroom" : "onbekend" };
+  const out = [];
+  for (let i = 1; i < lines.length; i++) {
+    const c = lines[i].split(sep);
+    const t = parseTime(c[0]), v = parseNum(c[gi]);
+    if (t != null && isFinite(v)) out.push({ t, v });
+  }
+  return { kind: "gas", readings: out };
+}
+
+/* Meterstanden -> verbruik per dag. Een dag telt alleen mee als hij (bijna) helemaal
+   gedekt is en er geen sprong terug in zit (meterwissel). */
+function toDaily(readings) {
+  const r = [...readings].sort((a, b) => a.t - b.t).filter((x, i, a) => i === 0 || x.t !== a[i - 1].t);
+  const gaps = [];
+  for (let i = 1; i < Math.min(r.length, 3000); i++) gaps.push(r[i].t - r[i - 1].t);
+  gaps.sort((a, b) => a - b);
+  const med = gaps[gaps.length >> 1] || DAY;
+  const gapMax = Math.max(1.5 * med, 2 * HOUR);
+  const use = new Map(), cov = new Map(), bad = new Set(), swapDays = new Set();
+  for (let i = 1; i < r.length; i++) {
+    const a = r[i - 1], b = r[i], gap = b.t - a.t, d = b.v - a.v, k = dkey(a.t);
+    if (gap > gapMax) continue;                                   // gat: die dagen halen hun dekking niet
+    if (d < 0 || d > 3 * gap / HOUR + 1) {                        // terugloop of onmogelijke sprong
+      bad.add(k); bad.add(dkey(b.t)); if (d < 0) swapDays.add(k);
+      continue;
+    }
+    use.set(k, (use.get(k) || 0) + d);
+    cov.set(k, (cov.get(k) || 0) + gap);
+  }
+  const days = new Map();
+  let incomplete = 0;
+  for (const [k, c] of cov) {
+    if (bad.has(k)) continue;
+    if (c >= 22 * HOUR) days.set(k, use.get(k)); else incomplete++;
+  }
+  const keys = [...days.keys()].sort();
+  return { days, keys, first: keys[0], last: keys[keys.length - 1], swapDays: swapDays.size, badDays: bad.size, incomplete, resolution: med };
+}
+
+/* ============================================================ model */
+// gas per dag = basis + k · max(0, Tb − T). Tb (stookgrens) zoeken op een rooster.
+function fitModel(pts) {
+  let best = null;
+  for (let tb = 8; tb <= 20.001; tb += 0.1) {
+    let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (const p of pts) { const x = Math.max(0, tb - p.T); n++; sx += x; sy += p.g; sxx += x * x; sxy += x * p.g; }
+    const den = n * sxx - sx * sx;
+    if (den <= 0) continue;
+    const k = (n * sxy - sx * sy) / den, b = (sy - k * sx) / n;
+    if (k <= 0) continue;
+    let sse = 0;
+    for (const p of pts) { const e = p.g - b - k * Math.max(0, tb - p.T); sse += e * e; }
+    if (!best || sse < best.sse) best = { tb: Math.round(tb * 10) / 10, k, b: Math.max(0, b), sse };
+  }
+  if (!best) return null;
+  const mean = pts.reduce((s, p) => s + p.g, 0) / pts.length;
+  const sst = pts.reduce((s, p) => s + (p.g - mean) ** 2, 0);
+  best.r2 = 1 - best.sse / sst;
+  best.n = pts.length;
+  return best;
+}
+const predict = (m, T) => m.b + m.k * Math.max(0, m.tb - T);
+
+// Per stookseizoen (okt–apr) de helling, met vaste stookgrens: ziet isolatie of gedrag veranderen.
+function perWinter(pts, m) {
+  const w = new Map();
+  for (const p of pts) {
+    const y = +p.date.slice(0, 4), mo = +p.date.slice(5, 7);
+    if (mo >= 5 && mo <= 9) continue;
+    const season = mo >= 10 ? y : y - 1;
+    if (!w.has(season)) w.set(season, []);
+    w.get(season).push(p);
+  }
+  const out = [];
+  for (const [s, arr] of [...w].sort((a, b) => a[0] - b[0])) {
+    let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (const p of arr) { const x = Math.max(0, m.tb - p.T); n++; sx += x; sy += p.g; sxx += x * x; sxy += x * p.g; }
+    const den = n * sxx - sx * sx;
+    if (n >= 60 && den > 0) out.push({ season: `${s}/${String(s + 1).slice(2)}`, k: (n * sxy - sx * sy) / den, n });
+  }
+  return out;
+}
+
+/* ============================================================ weer */
+async function geocode(q) {
+  const u = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=6&language=nl&countryCode=NL`;
+  const r = await fetch(u);
+  if (!r.ok) throw new Error("Plaats zoeken lukt nu niet.");
+  return (await r.json()).results || [];
+}
+async function fetchWeather(lat, lon, start, end) {
+  const u = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}` +
+            `&start_date=${start}&end_date=${end}&daily=temperature_2m_mean&timezone=Europe%2FAmsterdam`;
+  const r = await fetch(u);
+  if (!r.ok) throw new Error("Weerdata ophalen lukt nu niet. Probeer het zo nog eens.");
+  const j = await r.json();
+  const map = new Map();
+  j.daily.time.forEach((d, i) => { const T = j.daily.temperature_2m_mean[i]; if (T != null) map.set(d, T); });
+  return map;
+}
+
+/* ============================================================ berekeningen */
+function scenario(m, norm, o, P) {
+  // norm: temperaturen van alle dagen in de normjaren
+  const eta = o.eta;
+  let spaceGas = 0, hpHeat = 0;
+  const monthHeat = Array(12).fill(0), monthHp = Array(12).fill(0);
+  for (const d of norm) {
+    const g = m.k * Math.max(0, m.tb - d.T);
+    const heat = g * H_GAS * eta;
+    spaceGas += g;
+    const hp = P == null ? heat : Math.min(heat, P * 24 * HP_AVAIL);
+    hpHeat += hp;
+    monthHeat[d.mo] += heat; monthHp[d.mo] += hp;
+  }
+  const y = NORM_YEARS;
+  spaceGas /= y; hpHeat /= y;
+  for (let i = 0; i < 12; i++) { monthHeat[i] /= y; monthHp[i] /= y; }
+  const heat = spaceGas * H_GAS * eta;
+  return { spaceGas, heat, hpHeat, share: heat ? hpHeat / heat : 0, monthHeat, monthHp };
+}
+function money(m, sc, o, mode, P) {
+  const baseGas = m.b * 365;
+  const cookGas = o.cook ? Math.min(baseGas, COOK_M3_DAY * 365) : 0;
+  const dhwGas = baseGas - cookGas;
+  if (mode === "volledig") {
+    const elecHeat = sc.heat / o.cop;
+    const elecDhw = dhwGas * H_GAS * o.eta / o.copDhw;
+    const elecCook = cookGas * H_GAS * 0.45;               // koken op inductie i.p.v. gas
+    const elec = elecHeat + elecDhw + elecCook;
+    const gasSaved = sc.spaceGas + baseGas;
+    const save = gasSaved * o.pg + o.fixed - elec * o.pe;
+    return { gasSaved, gasLeft: 0, elec, save, before: (sc.spaceGas + baseGas) * o.pg + o.fixed };
+  }
+  const gasSaved = sc.hpHeat / (H_GAS * o.eta);
+  const elec = sc.hpHeat / o.cop;
+  return { gasSaved, gasLeft: sc.spaceGas + baseGas - gasSaved, elec, save: gasSaved * o.pg - elec * o.pe,
+           before: (sc.spaceGas + baseGas) * o.pg };
+}
+
+/* ============================================================ grafieken (SVG) */
+const SVGNS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function niceTicks(lo, hi, n = 5) {
+  const span = hi - lo || 1, step0 = span / n, mag = 10 ** Math.floor(Math.log10(step0));
+  const step = [1, 2, 2.5, 5, 10].map(s => s * mag).find(s => span / s <= n) || 10 * mag;
+  const t = [];
+  const top = Math.ceil(hi / step - 1e-9) * step;               // laatste tick op of boven het maximum
+  for (let v = Math.floor(lo / step + 1e-9) * step; v <= top + 1e-9; v += step) t.push(+v.toFixed(6));
+  return t;
+}
+// Teken op de echte breedte, zodat de tekst op een telefoon niet mee verkleint
+const chartWidth = host => Math.round(Math.min(760, Math.max(300, host.clientWidth || 720)));
+function frame(host, W, Hh, pad) {
+  host.innerHTML = "";
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${Hh}`, role: "img" }, host);
+  const tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true; host.appendChild(tip);
+  return { svg, tip, x0: pad.l, x1: W - pad.r, y0: Hh - pad.b, y1: pad.t };
+}
+function showTip(host, f, svgX, svgY, html) {
+  const r = f.svg.getBoundingClientRect(), vb = f.svg.viewBox.baseVal;
+  f.tip.innerHTML = html; f.tip.hidden = false;
+  f.tip.style.left = (svgX * r.width / vb.width) + "px";
+  f.tip.style.top = (svgY * r.height / vb.height) + "px";
+}
+
+// Staafgrafiek: één serie of gestapeld (series = [{vals, color, name}])
+function barChart(host, labels, series, { unit = "", yLabel = "", title = "" } = {}) {
+  const W = chartWidth(host), Hh = W < 500 ? 220 : 260, pad = { l: 46, r: 8, t: 24, b: 30 };
+  const f = frame(host, W, Hh, pad);
+  f.svg.setAttribute("aria-label", title);
+  const tot = labels.map((_, i) => series.reduce((s, se) => s + se.vals[i], 0));
+  const ymax = Math.max(...tot) * 1.08 || 1;
+  const ticks = niceTicks(0, ymax, 4);
+  const Y = v => f.y0 - (v / ticks[ticks.length - 1]) * (f.y0 - f.y1);
+  for (const t of ticks) {
+    svgEl("line", { x1: f.x0, x2: f.x1, y1: Y(t), y2: Y(t), class: t === 0 ? "axis" : "gridl" }, f.svg);
+    svgEl("text", { x: f.x0 - 8, y: Y(t) + 4, "text-anchor": "end" }, f.svg).textContent = fmt(t);
+  }
+  if (yLabel) svgEl("text", { x: 4, y: 10 }, f.svg).textContent = yLabel;
+  const n = labels.length, bw = (f.x1 - f.x0) / n, gap = Math.max(2, bw * 0.22);
+  const every = Math.ceil(n / Math.max(4, Math.floor((f.x1 - f.x0) / 42)));
+  labels.forEach((lab, i) => {
+    const x = f.x0 + i * bw + gap / 2, w = bw - gap;
+    let acc = 0;
+    series.forEach((se, si) => {
+      const v = se.vals[i]; if (v <= 0) return;
+      const yTop = Y(acc + v), yBot = Y(acc);
+      const h = Math.max(0, yBot - yTop - (si > 0 ? 2 : 0));
+      const isTop = si === series.length - 1 || series.slice(si + 1).every(s2 => s2.vals[i] <= 0);
+      const rr = isTop ? Math.min(4, w / 2, h) : 0;
+      svgEl("path", { d: roundTop(x, yTop, w, h, rr), fill: se.color }, f.svg);
+      acc += v;
+    });
+    if (i % every === 0) svgEl("text", { x: x + w / 2, y: f.y0 + 18, "text-anchor": "middle" }, f.svg).textContent = lab.short || lab;
+    const hit = svgEl("rect", { x: f.x0 + i * bw, y: f.y1, width: bw, height: f.y0 - f.y1, fill: "transparent" }, f.svg);
+    hit.addEventListener("mouseenter", () => {
+      const lines = series.map(se => `${series.length > 1 ? esc(se.name) + ": " : ""}${fmt(se.vals[i])} ${unit}`).join("<br>");
+      showTip(host, f, x + w / 2, Y(tot[i]), `<b>${esc(lab.long || lab)}</b><br>${lines}`);
+    });
+    hit.addEventListener("mouseleave", () => f.tip.hidden = true);
+  });
+}
+function roundTop(x, y, w, h, r) {
+  if (h <= 0) return "";
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+}
+
+// Spreidingsdiagram: gas per dag tegen buitentemperatuur, met de modellijn
+function scatter(host, groups, m) {
+  const W = chartWidth(host), Hh = W < 500 ? 300 : 360, pad = { l: 46, r: 12, t: 26, b: 38 };
+  const f = frame(host, W, Hh, pad);
+  f.svg.setAttribute("aria-label", "Gasverbruik per dag tegen de gemiddelde buitentemperatuur");
+  const all = groups.flatMap(g => g.pts);
+  const Tmin = Math.floor(Math.min(...all.map(p => p.T), -5)), Tmax = Math.ceil(Math.max(...all.map(p => p.T), 25));
+  const gmax = Math.max(...all.map(p => p.g), predict(m, Tmin)) * 1.05;
+  const xt = niceTicks(Tmin, Tmax, 8), yt = niceTicks(0, gmax, 5);
+  const X = T => f.x0 + (T - xt[0]) / (xt[xt.length - 1] - xt[0]) * (f.x1 - f.x0);
+  const Y = g => f.y0 - Math.min(g, yt[yt.length - 1]) / yt[yt.length - 1] * (f.y0 - f.y1);
+  for (const t of yt) {
+    svgEl("line", { x1: f.x0, x2: f.x1, y1: Y(t), y2: Y(t), class: t === 0 ? "axis" : "gridl" }, f.svg);
+    svgEl("text", { x: f.x0 - 8, y: Y(t) + 4, "text-anchor": "end" }, f.svg).textContent = fmt(t);
+  }
+  for (const t of xt) svgEl("text", { x: X(t), y: f.y0 + 18, "text-anchor": "middle" }, f.svg).textContent = fmt(t);
+  svgEl("text", { x: (f.x0 + f.x1) / 2, y: Hh - 4, "text-anchor": "middle" }, f.svg).textContent = "gemiddelde buitentemperatuur van de dag (°C)";
+  svgEl("text", { x: 4, y: 10 }, f.svg).textContent = "m³ gas per dag";
+  // stookgrens
+  svgEl("line", { x1: X(m.tb), x2: X(m.tb), y1: f.y1, y2: f.y0, stroke: "var(--ink-3)", "stroke-dasharray": "3 4", "stroke-width": 1 }, f.svg);
+  svgEl("text", { x: X(m.tb) + 6, y: f.y1 + 12 }, f.svg).textContent = `stookgrens ${fmt(m.tb, 1)} °C`;
+  const pts = [];
+  for (const g of groups) for (const p of g.pts) {
+    const cx = X(p.T), cy = Y(p.g);
+    svgEl("circle", { cx, cy, r: 3.2, fill: g.color, "fill-opacity": 0.55, stroke: "var(--surface)", "stroke-width": 0.8 }, f.svg);
+    pts.push({ cx, cy, p, name: g.name });
+  }
+  const line = [xt[0], m.tb, xt[xt.length - 1]].map(T => `${X(T)},${Y(predict(m, T))}`).join(" ");
+  svgEl("polyline", { points: line, fill: "none", stroke: "var(--ink)", "stroke-width": 2.2 }, f.svg);
+  const hl = svgEl("circle", { r: 6, fill: "none", stroke: "var(--ink)", "stroke-width": 2 }, f.svg); hl.style.display = "none";
+  f.svg.addEventListener("mousemove", e => {
+    const r = f.svg.getBoundingClientRect(), sx = (e.clientX - r.left) * W / r.width, sy = (e.clientY - r.top) * Hh / r.height;
+    let best = null, bd = 400;
+    for (const q of pts) { const d = (q.cx - sx) ** 2 + (q.cy - sy) ** 2; if (d < bd) { bd = d; best = q; } }
+    if (!best) { f.tip.hidden = true; hl.style.display = "none"; return; }
+    hl.setAttribute("cx", best.cx); hl.setAttribute("cy", best.cy); hl.style.display = "";
+    const dt = new Date(best.p.date + "T12:00:00Z").toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" });
+    showTip(host, f, best.cx, best.cy, `<b>${dt}</b><br>${fmt(best.p.T, 1)} °C · ${fmt(best.p.g, 2)} m³<br>model: ${fmt(predict(m, best.p.T), 2)} m³`);
+  });
+  f.svg.addEventListener("mouseleave", () => { f.tip.hidden = true; hl.style.display = "none"; });
+}
+
+/* ============================================================ stap 1: bestanden */
+async function addFiles(list) {
+  for (const file of list) {
+    const text = typeof file.text === "function" ? await file.text() : file.content;
+    const res = parseFile(text);
+    state.files.push({ name: file.name, kind: res.kind, n: res.readings ? res.readings.length : 0 });
+    if (res.kind === "gas") state.readings.push(...res.readings);
+  }
+  renderFiles();
+  if (state.readings.length) analyseData();
+}
+function renderFiles() {
+  const label = { gas: "gas", stroom: "stroom (nog niet gebruikt)", onbekend: "niet herkend", leeg: "leeg" };
+  $("#filelist").innerHTML = state.files.map(f =>
+    `<div><span>${esc(f.name)}</span><span>${label[f.kind]}${f.n ? ` · ${fmt(f.n)} regels` : ""}</span></div>`).join("");
+}
+
+/* ============================================================ stap 2: controle */
+function analyseData() {
+  const d = toDaily(state.readings);
+  state.daily = d;
+  const s2 = $("#s2"); s2.classList.remove("locked");
+  if (!d.keys.length) {
+    $("#facts").innerHTML = "";
+    $("#chart-month").innerHTML = "";
+    $("#checks").innerHTML = notice("warn", "Geen bruikbare dagen gevonden. Controleer of dit een export van het gasverbruik is.");
+    return;
+  }
+  const span = (Date.parse(d.last) - Date.parse(d.first)) / DAY + 1;
+  const total = [...d.days.values()].reduce((a, b) => a + b, 0);
+  const res = d.resolution <= HOUR ? `${Math.round(d.resolution / 60e3)} minuten` : "per dag";
+  $("#facts").innerHTML = [
+    [fmtDate(d.first) + " –<br>" + fmtDate(d.last), "periode"],
+    [fmt(d.keys.length), "bruikbare dagen"],
+    [fmt(total / d.keys.length * 365), "m³ gas per jaar (gem.)"],
+    [res, "meetinterval"],
+  ].map(([v, l]) => `<div class="fact"><span class="v" style="font-size:${String(v).length > 14 ? "1rem" : ""}">${v}</span><span class="l">${l}</span></div>`).join("");
+
+  // maandtotalen
+  const months = new Map();
+  for (const k of d.keys) { const mk = k.slice(0, 7); months.set(mk, (months.get(mk) || 0) + d.days.get(k)); }
+  const mks = [...months.keys()].sort();
+  barChart($("#chart-month"), mks.map(mk => ({ short: MONTHS[+mk.slice(5) - 1] + (mk.slice(5) === "01" ? " '" + mk.slice(2, 4) : ""), long: MONTHS[+mk.slice(5) - 1] + " " + mk.slice(0, 4) })),
+    [{ vals: mks.map(mk => months.get(mk)), color: "var(--gas)", name: "gas" }],
+    { unit: "m³", yLabel: "m³ gas per maand (bruikbare dagen)", title: "Gasverbruik per maand" });
+
+  const checks = [];
+  const winters = new Set(d.keys.filter(k => [12, 1, 2].includes(+k.slice(5, 7))).map(k => k.slice(0, 7)));
+  if (winters.size < 3) checks.push(notice("warn", "<b>Te weinig wintermaanden.</b> Voor een betrouwbare uitkomst is minstens één hele winter nodig (december t/m februari)."));
+  else checks.push(notice("ok", `<b>Genoeg data.</b> ${fmt(winters.size)} wintermaanden gevonden.`));
+  if (d.swapDays) checks.push(notice("ok", `<b>Meterwissel gevonden</b> (${d.swapDays === 1 ? "1 dag" : d.swapDays + " dagen"}). Die dag laten we weg, de rest telt gewoon mee.`));
+  const missing = Math.round(span - d.keys.length);
+  if (missing > 5) checks.push(notice(missing > span * 0.2 ? "warn" : "ok", `<b>${fmt(missing)} dagen ontbreken of zijn onvolledig</b> binnen de periode. Die slaan we over.`));
+  $("#checks").innerHTML = checks.join("");
+
+  $("#s3").classList.remove("locked");
+  // standaard: de dag van de eerste warmtepomp-hint leeg laten
+  updateCalc();
+}
+const fmtDate = k => new Date(k + "T12:00:00Z").toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" });
+const notice = (kind, html) => `<div class="notice ${kind}"><span class="ic">${kind === "warn" ? "!" : "✓"}</span><span>${html}</span></div>`;
+
+/* ============================================================ stap 3: vragen */
+function opts() {
+  return {
+    mode: document.querySelector("input[name=mode]:checked").value,
+    cook: document.querySelector("input[name=cook]:checked").value === "1",
+    pg: parseNum($("#pg").value) || 0, pe: parseNum($("#pe").value) || 0,
+    eta: (parseNum($("#eta").value) || 90) / 100,
+    tdesign: parseNum($("#tdesign").value),
+    since: $("#since").value || null,
+  };
+}
+function updateCalc() {
+  const o = opts();
+  $("#sinceField").hidden = o.mode !== "heb";
+  const ok = state.daily && state.daily.keys.length && state.place && (o.mode !== "heb" || o.since);
+  $("#calc").disabled = !ok;
+  $("#calcMsg").textContent = !state.place ? "Kies eerst je woonplaats." : (o.mode === "heb" && !o.since ? "Vul de startdatum van je warmtepomp in." : "");
+}
+async function searchPlace() {
+  const q = $("#place").value.trim();
+  if (!q) return;
+  $("#places").innerHTML = `<span class="muted"><span class="spin"></span> zoeken…</span>`;
+  try {
+    const res = await geocode(q);
+    if (!res.length) { $("#places").innerHTML = `<span class="muted">Niets gevonden. Probeer een plaatsnaam.</span>`; return; }
+    $("#places").innerHTML = "";
+    res.forEach((p, i) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = `${p.name}${p.admin1 ? " (" + p.admin1 + ")" : ""}`;
+      b.setAttribute("aria-pressed", "false");
+      b.onclick = () => {
+        $("#places").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", "false"));
+        b.setAttribute("aria-pressed", "true");
+        state.place = { name: p.name, lat: p.latitude, lon: p.longitude };
+        updateCalc();
+      };
+      $("#places").appendChild(b);
+      if (i === 0) b.click();
+    });
+  } catch (e) { $("#places").innerHTML = `<span class="muted">${esc(e.message)}</span>`; }
+}
+
+/* ============================================================ rapport */
+async function calculate(ev) {
+  ev.preventDefault();
+  const o = opts(), d = state.daily;
+  $("#calc").disabled = true;
+  $("#calcMsg").innerHTML = `<span class="spin"></span> weerdata ophalen…`;
+  try {
+    const thisYear = new Date().getFullYear();
+    const normStart = `${thisYear - NORM_YEARS}-01-01`, normEnd = `${thisYear - 1}-12-31`;
+    const limit = new Date(Date.now() - 6 * DAY).toISOString().slice(0, 10);
+    const start = d.first < normStart ? d.first : normStart;
+    const end = (d.last > normEnd ? d.last : normEnd) < limit ? (d.last > normEnd ? d.last : normEnd) : limit;
+    const wx = await fetchWeather(state.place.lat, state.place.lon, start, end);
+
+    const pts = d.keys.filter(k => wx.has(k)).map(k => ({ date: k, T: wx.get(k), g: d.days.get(k) }));
+    const before = o.mode === "heb" ? pts.filter(p => p.date < o.since) : pts;
+    const after = o.mode === "heb" ? pts.filter(p => p.date >= o.since) : [];
+    const m = fitModel(before);
+    if (!m || before.filter(p => p.T < m.tb).length < 60) throw new Error("Te weinig stookdagen om een betrouwbaar model te maken. Er is minstens één winter nodig" + (o.mode === "heb" ? " vóór de startdatum van je warmtepomp." : "."));
+    const norm = [];
+    for (const [k, T] of wx) if (k >= normStart && k <= normEnd) norm.push({ T, mo: +k.slice(5, 7) - 1 });
+    const winters = perWinter(before, m);
+    state.result = { m, pts, before, after, norm, winters, o };
+    renderReport();
+    $("#calcMsg").textContent = "";
+    $("#report").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  } catch (e) {
+    $("#calcMsg").textContent = e.message;
+  } finally { updateCalc(); }
+}
+
+function renderReport() {
+  const { m, before, after, norm, winters, o } = state.result;
+  const UA = m.k * H_GAS * o.eta / 24 * 1000;                 // W per graad
+  const Pdesign = UA * (m.tb - o.tdesign) / 1000;             // kW
+  const base = scenario(m, norm, o, null);
+  const R = $("#report"); R.hidden = false;
+  const heb = o.mode === "heb";
+
+  let html = `
+  <div class="hero">
+    <span class="tag">Resultaat · ${esc(state.place.name)}</span>
+    <h2 style="font-size:1.9rem">Jouw huis verliest ongeveer ${fmt(Math.round(UA / 10) * 10)} watt per graad</h2>
+    <p class="lede">Is het buiten 1 °C kouder, dan moet de verwarming ${fmt(Math.round(UA / 10) * 10)} W extra leveren. Op een koude dag van ${fmt(o.tdesign)} °C is dat in totaal ongeveer ${fmt(Pdesign, 1)} kW.</p>
+    <div class="kpis">
+      ${kpi(fmt(Math.round(UA / 10) * 10), "W/K", "Warmteverlies", "per graad verschil binnen–buiten")}
+      ${kpi(fmt(m.tb, 1), "°C", "Stookgrens", "boven deze buitentemperatuur stookt je huis niet")}
+      ${kpi(fmt(Pdesign, 1), "kW", "Nodig vermogen", `bij ${fmt(o.tdesign)} °C buiten (daggemiddelde)`)}
+      ${kpi(fmt(base.spaceGas + m.b * 365), "m³", "Gas per normaal jaar", `waarvan ${fmt(m.b * 365)} m³ voor warm water${o.cook ? " en koken" : ""}`)}
+    </div>
+  </div>
+
+  <div class="block">
+    <h3>Zo komen we eraan: jouw eigen verbruik</h3>
+    <p class="muted">Elke stip is een dag. Hoe kouder het buiten was, hoe meer gas je huis gebruikte. De lijn is het model dat het best past. Hoe schuiner de lijn, hoe meer warmte je huis verliest.</p>
+    <div class="legend">${heb && after.length ? `<span><i style="background:var(--gas)"></i>vóór de warmtepomp</span><span><i style="background:var(--hp)"></i>met warmtepomp</span>` : ""}<span><i style="background:var(--ink);height:3px;vertical-align:3px"></i>model</span></div>
+    <div class="chart" id="c-scatter"></div>
+    <p class="muted">Model: gas per dag = ${fmt(m.b, 2)} m³ + ${fmt(m.k, 3)} m³ × graden onder ${fmt(m.tb, 1)} °C. Het model verklaart ${fmt(m.r2 * 100)} % van de verschillen tussen dagen (${fmt(m.n)} dagen).</p>
+    ${winterNote(winters, m)}
+  </div>`;
+
+  if (heb) html += existingBlock();
+  else html += `
+  <div class="block noprint">
+    <h3>Pas de aannames aan</h3>
+    <div class="sliders">
+      ${slider("cop", "Rendement warmtepomp (SCOP)", o.mode === "volledig" ? 3.5 : 3.8, 2, 5.5, 0.1)}
+      ${o.mode === "hybride" ? slider("cap", "Vermogen hybride warmtepomp (kW)", Math.min(8, Math.max(3, Math.round(Pdesign * 0.5))), 2, 10, 0.5) : ""}
+      ${slider("pgR", "Gasprijs (€/m³)", o.pg, 0.8, 2.5, 0.05)}
+      ${slider("peR", "Stroomprijs (€/kWh)", o.pe, 0.1, 0.5, 0.01)}
+      ${o.mode === "volledig" ? slider("fixed", "Vaste kosten gasaansluiting (€/jaar)", 270, 0, 500, 10) : ""}
+    </div>
+  </div>
+  <div class="block" id="b-advice"></div>
+  <div class="block">
+    <h3>Warmte per maand in een normaal jaar</h3>
+    <div class="legend"><span><i style="background:var(--hp)"></i>door de warmtepomp</span>${o.mode === "hybride" ? `<span><i style="background:var(--gas)"></i>door de cv-ketel</span>` : ""}</div>
+    <div class="chart" id="c-month"></div>
+  </div>`;
+
+  html += `
+  <div class="block">
+    <h3>Aannames en kanttekeningen</h3>
+    <ul class="plain">
+      <li>Het warmteverlies is afgeleid uit gas, met een ketelrendement van ${fmt(o.eta * 100)} % en ${fmt(H_GAS, 2)} kWh per m³. Een ander rendement verschuift alle uitkomsten evenredig.</li>
+      <li>Een "normaal jaar" is het gemiddelde weer van ${norm.length ? `${fmt(new Date().getFullYear() - NORM_YEARS, 0).replace(".", "")}–${new Date().getFullYear() - 1}` : "de afgelopen jaren"} bij ${esc(state.place.name)}.</li>
+      <li>Het vermogen bij ${fmt(o.tdesign)} °C geldt voor een daggemiddelde. 's Nachts en bij wind kan de vraag hoger zijn; een installateur rekent met een marge.</li>
+      <li>Houtkachel, vakanties, een verbouwing of meer mensen thuis verstoren de meting. Zie je rare stippen, dan is dat vaak de reden.</li>
+      <li>De warmtepomp levert hier maximaal ${fmt(HP_AVAIL * 100)} % van zijn vermogen over een hele dag (ontdooien, pieken). Een hybride stookt de rest met de ketel.</li>
+    </ul>
+    <div class="row noprint"><button type="button" class="ghost" id="printBtn">Rapport opslaan als pdf</button></div>
+  </div>
+  <div class="block noprint">
+    <h3>Help dit onderzoek verbeteren</h3>
+    <p>Dit is een onderzoeksprototype. Klopt de uitkomst met wat je installateur of je warmtepomp zegt? Was iets onduidelijk? Je feedback helpt de methode te verbeteren.</p>
+    <p class="muted">Wil je je kerngetallen delen? Kopieer dan deze regel en plak hem in het formulier. Er staat geen verbruik per dag, adres of naam in.</p>
+    <div class="row"><code id="summaryLine" style="user-select:all;background:var(--bg);padding:8px 10px;border-radius:8px;overflow-wrap:anywhere">${esc(summaryLine())}</code><button type="button" class="ghost" id="copyBtn">Kopieer</button></div>
+    <div class="row">${FEEDBACK_URL ? `<a class="btn" href="${FEEDBACK_URL}" target="_blank" rel="noopener" style="text-decoration:none">Geef feedback</a>` : `<span class="muted">Het feedbackformulier komt binnenkort.</span>`}</div>
+  </div>`;
+  R.innerHTML = html;
+
+  const groups = [{ name: "vóór", color: "var(--gas)", pts: before }];
+  if (after.length) groups.push({ name: "met warmtepomp", color: "var(--hp)", pts: after });
+  scatter($("#c-scatter"), groups, m);
+  $("#printBtn").onclick = () => window.print();
+  $("#copyBtn").onclick = () => {
+    const t = $("#summaryLine").textContent;
+    navigator.clipboard.writeText(t).then(() => { $("#copyBtn").textContent = "Gekopieerd"; }, () => {
+      getSelection().selectAllChildren($("#summaryLine"));
+    });
+  };
+  if (!heb) {
+    R.querySelectorAll("input[type=range]").forEach(inp => inp.addEventListener("input", () => { syncOut(inp); renderAdvice(); }));
+    renderAdvice();
+  }
+}
+// Anonieme kerngetallen voor het feedbackformulier: alleen modeluitkomsten, afgerond.
+function summaryLine() {
+  const { m, winters, o } = state.result;
+  const UA = m.k * H_GAS * o.eta / 24 * 1000;
+  const cp = String(state.place.name).slice(0, 40);
+  return [`v1`, `plaats=${cp}`, `WK=${Math.round(UA / 10) * 10}`, `Tb=${m.tb.toFixed(1)}`, `basis=${m.b.toFixed(2)}`,
+          `R2=${m.r2.toFixed(2)}`, `dagen=${m.n}`, `winters=${winters.length}`, `keuze=${o.mode}`].join(" · ");
+}
+const kpi = (v, unit, label, desc) => `<div class="kpi"><span class="l">${label}</span><span class="v">${v}<small>${unit}</small></span><span class="d">${desc}</span></div>`;
+const slider = (id, label, val, min, max, step) =>
+  `<label>${label}<output id="${id}Out">${fmt(val, step < 0.1 ? 2 : step < 1 ? 1 : 0)}</output><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}"></label>`;
+function syncOut(inp) {
+  const st = +inp.step;
+  $("#" + inp.id + "Out").textContent = fmt(+inp.value, st < 0.1 ? 2 : st < 1 ? 1 : 0);
+}
+function winterNote(w, m) {
+  if (w.length < 2) return "";
+  const rows = w.map(x => `<tr><td>${x.season}</td><td>${fmt(x.k, 3)}</td><td>${fmt(x.k * H_GAS * state.result.o.eta / 24 * 1000)}</td><td>${fmt(x.n)}</td></tr>`).join("");
+  const ks = w.map(x => x.k), spread = (Math.max(...ks) - Math.min(...ks)) / m.k;
+  const msg = spread > 0.2
+    ? notice("warn", "<b>De winters verschillen flink.</b> Is er geïsoleerd, verbouwd of veranderde het stookgedrag? Dan geldt vooral de laatste winter.")
+    : notice("ok", "<b>De winters zijn consistent.</b> Het warmteverlies is stabiel over de jaren.");
+  return `${msg}<div class="tbl-wrap"><table><thead><tr><th>Stookseizoen</th><th>m³ per graaddag</th><th>W/K</th><th>dagen</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function renderAdvice() {
+  const { m, norm, o } = state.result;
+  const v = id => { const e = $("#" + id); return e ? +e.value : null; };
+  const oo = { ...o, cop: v("cop"), copDhw: 2.5, pg: v("pgR"), pe: v("peR"), fixed: v("fixed") || 0 };
+  const P = o.mode === "hybride" ? v("cap") : null;
+  const UA = m.k * H_GAS * o.eta / 24 * 1000, Pdesign = UA * (m.tb - o.tdesign) / 1000;
+  const sc = scenario(m, norm, oo, P);
+  const mon = money(m, sc, oo, o.mode, P);
+  let html;
+  if (o.mode === "hybride") {
+    let enough = null;
+    const rows = [3, 4, 5, 6, 8].map(p => {
+      const s = scenario(m, norm, oo, p), mm = money(m, s, oo, "hybride", p);
+      if (enough == null && s.share >= 0.9) enough = p;
+      return `<tr class="${p === P ? "sel" : ""}"><td>${p} kW</td><td>${fmt(s.share * 100)} %</td><td>${fmt(mm.gasSaved)} m³</td><td>${fmt(mm.elec)} kWh</td><td>${eur(mm.save)}</td></tr>`;
+    }).join("");
+    html = `
+      <h3>Wat een hybride warmtepomp van ${fmt(P, 1)} kW doet</h3>
+      <div class="kpis">
+        ${kpi(fmt(sc.share * 100), "%", "Warmte door de warmtepomp", "van de ruimteverwarming; de ketel doet de rest en het warme water")}
+        ${kpi(fmt(mon.gasSaved), "m³", "Minder gas per jaar", `van ${fmt(sc.spaceGas + m.b * 365)} naar ${fmt(mon.gasLeft)} m³`)}
+        ${kpi(fmt(mon.elec), "kWh", "Extra stroom per jaar", `bij SCOP ${fmt(oo.cop, 1)}`)}
+      </div>
+      <div><span class="muted">Besparing per jaar</span><div class="big-save">${eur(mon.save)}</div></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Vermogen</th><th>deel warmte</th><th>minder gas</th><th>extra stroom</th><th>besparing/jaar</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="muted">${enough
+        ? `Vanaf ${enough} kW levert de warmtepomp 90 % of meer van de warmte. Groter levert weinig extra op, want de koudste dagen zijn zeldzaam.`
+        : `Zelfs 8 kW levert minder dan 90 % van de warmte. Je huis vraagt veel vermogen; isoleren of een volledig elektrische warmtepomp met meer vermogen is het overwegen waard.`}
+        In de praktijk schakelt een hybride ook terug naar de ketel bij hoge aanvoertemperaturen of een ongunstige prijs, dus het werkelijke aandeel ligt vaak iets lager.</p>`;
+  } else {
+    html = `
+      <h3>Wat een volledig elektrische warmtepomp doet</h3>
+      <div class="kpis">
+        ${kpi(fmt(Math.ceil(Pdesign * 2) / 2, 1), "kW", "Minimaal vermogen", `bij ${fmt(o.tdesign)} °C; plus marge voor warm water`)}
+        ${kpi(fmt(mon.gasSaved), "m³", "Geen gas meer", "verwarming, warm water" + (o.cook ? " en koken (inductie)" : ""))}
+        ${kpi(fmt(mon.elec), "kWh", "Extra stroom per jaar", `verwarming SCOP ${fmt(oo.cop, 1)}, warm water 2,5`)}
+      </div>
+      <div><span class="muted">Besparing per jaar, inclusief opzeggen gasaansluiting</span><div class="big-save">${eur(mon.save)}</div></div>
+      <p class="muted">Een volledig elektrische warmtepomp werkt het best met lage-temperatuurverwarming (vloerverwarming of grote radiatoren) en goede isolatie. Je warmteverlies van ${fmt(Math.round(UA / 10) * 10)} W/K ${UA > 350 ? "is aan de hoge kant: isoleren vóór of samen met de warmtepomp is het overwegen waard" : "is gunstig voor een volledig elektrische warmtepomp"}.</p>`;
+  }
+  $("#b-advice").innerHTML = html;
+  const labels = MONTHS.map((mo, i) => ({ short: mo, long: mo }));
+  const series = [{ vals: sc.monthHp, color: "var(--hp)", name: "warmtepomp" }];
+  if (o.mode === "hybride") series.push({ vals: sc.monthHeat.map((h, i) => h - sc.monthHp[i]), color: "var(--gas)", name: "cv-ketel" });
+  barChart($("#c-month"), labels, series, { unit: "kWh", yLabel: "kWh warmte per maand", title: "Warmte per maand" });
+}
+
+function existingBlock() {
+  const { m, before, after } = state.result;
+  if (!after.length) return `<div class="block">${notice("warn", "Er zijn nog geen dagen na de startdatum van je warmtepomp met weerdata.")}</div>`;
+  // Per kalendermaand het gemiddelde verschil tussen meting en model vóór de warmtepomp.
+  // Vangt seizoenseffecten op die het eenvoudige model mist (zon in het voorjaar, kouder leidingwater in de winter).
+  const sum = Array(12).fill(0), cnt = Array(12).fill(0);
+  for (const p of before) { const mo = +p.date.slice(5, 7) - 1; sum[mo] += p.g - predict(m, p.T); cnt[mo]++; }
+  const corr = sum.map((s, i) => cnt[i] >= 20 ? s / cnt[i] : 0);
+  let exp = 0, act = 0;
+  for (const p of after) { exp += Math.max(0, predict(m, p.T) + corr[+p.date.slice(5, 7) - 1]); act += p.g; }
+  const saved = exp - act;
+  return `
+  <div class="block">
+    <h3>Wat je warmtepomp tot nu toe deed</h3>
+    <p class="muted">Van ${fmtDate(after[0].date)} tot ${fmtDate(after[after.length - 1].date)} (${fmt(after.length)} dagen). Zonder warmtepomp had je huis bij dit weer ${fmt(exp)} m³ gas gebruikt. Die verwachting is gecorrigeerd voor het seizoen, op basis van dezelfde maanden in de jaren ervoor.</p>
+    <div class="kpis">
+      ${kpi(fmt(exp), "m³", "Verwacht zonder warmtepomp", "volgens jouw model en het echte weer")}
+      ${kpi(fmt(act), "m³", "Werkelijk verbruikt", "gemeten door je slimme meter")}
+      ${kpi(fmt(saved), "m³", "Bespaard gas", `${fmt(exp > 0 ? saved / exp * 100 : 0)} % minder dan verwacht`)}
+    </div>
+    <p class="muted">Tel je de stroom van de warmtepomp erbij (in de app van je warmtepomp, of met een aparte kWh-meter), dan weet je de echte besparing in euro's. Die rekensom komt in een volgende versie.</p>
+  </div>`;
+}
+
+/* ============================================================ koppelingen */
+const drop = $("#drop"), inp = $("#files");
+inp.addEventListener("change", () => { addFiles([...inp.files]); inp.value = ""; });
+drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inp.click(); } });
+["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => addFiles([...e.dataTransfer.files]));
+$("#placeBtn").onclick = searchPlace;
+$("#place").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); searchPlace(); } });
+document.querySelectorAll("input[name=mode], #since").forEach(e => e.addEventListener("change", updateCalc));
+$("#qform").addEventListener("submit", calculate);
+
+// Voorbeelddata: alleen als er een map voorbeeld/ met manifest.json naast de pagina staat
+fetch("voorbeeld/manifest.json").then(r => r.ok ? r.json() : null).then(man => {
+  if (!man) return;
+  const btn = $("#demo"); btn.hidden = false;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    const files = await Promise.all(man.files.map(async f => ({ name: f.split("/").pop(), content: await (await fetch(f)).text() })));
+    await addFiles(files);
+    if (man.place) { $("#place").value = man.place; await searchPlace(); }
+  };
+}).catch(() => {});
+</script>
+</body>
+</html>
