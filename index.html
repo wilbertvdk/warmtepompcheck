@@ -59,6 +59,8 @@ h2 { font-size: 1.45rem; font-weight: 700; }
 h3 { font-size: 1.08rem; font-weight: 700; }
 p { margin: 0; max-width: 65ch; }
 .lede { font-size: 1.12rem; color: var(--ink-2); }
+.howto { margin: 14px 0 0; padding-left: 1.3em; color: var(--ink-2); display: grid; gap: 4px; }
+.howto li::marker { color: var(--ink-3); font-weight: 600; }
 .muted { color: var(--ink-3); font-size: 0.9rem; }
 .num { font-variant-numeric: tabular-nums; }
 a { color: var(--accent); }
@@ -176,6 +178,12 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
   <span class="tag">Onderzoeksprototype</span>
   <h1>Warmtepompcheck</h1>
   <p class="lede">Upload het gasverbruik van je slimme meter. Je ziet hoeveel warmte je huis verliest per graad dat het buiten kouder wordt, welk vermogen een warmtepomp nodig heeft, en wat hij ongeveer bespaart.</p>
+  <ol class="howto">
+    <li><b>Upload</b> je gasverbruik (csv van HomeWizard, Bosch/Nefit of je leverancier), of bekijk eerst het voorbeeldhuis.</li>
+    <li><b>Controleer</b> wat de pagina van je data maakt.</li>
+    <li><b>Beantwoord</b> een paar vragen: woonplaats, soort warmtepomp, vast of dynamisch contract en je prijzen.</li>
+    <li><b>Bereken</b> en lees je rapport: warmteverlies, nodig vermogen en besparing.</li>
+  </ol>
   <ul class="promises">
     <li>Je verbruik blijft op je eigen apparaat</li>
     <li>Gratis, geen account</li>
