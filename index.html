@@ -114,6 +114,8 @@ form.q { display: grid; gap: 18px; }
 .field { display: grid; gap: 6px; }
 .field > label, .field > .lab { font-weight: 600; }
 .field .hint { color: var(--ink-3); font-size: 0.88rem; }
+.dyn { margin-top: 20px; padding-top: 4px; border-top: 1px solid var(--line, #0002); }
+.dyn h3 { margin-bottom: 6px; }
 input[type=text], input[type=number], input[type=date], select {
   font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; max-width: 100%;
 }
@@ -260,14 +262,25 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
         </div>
       </div>
 
+      <div class="field">
+        <span class="lab">Wat voor energiecontract heb je?</span>
+        <div class="choices">
+          <label><input type="radio" name="contract" value="vast" checked> Vast tarief</label>
+          <label><input type="radio" name="contract" value="dynamisch" id="contractDyn"> Dynamisch (uurprijzen)</label>
+        </div>
+        <span class="hint" id="contractHint" hidden>Dan telt wanneer de warmtepomp draait: bij kou, 's ochtends en 's avonds is stroom vaak duurder. We rekenen met de echte uurprijzen van de beurs (NL) sinds januari 2023 en het weer van diezelfde uren.</span>
+      </div>
+
       <div class="grid2">
         <div class="field">
-          <label for="pg">Gasprijs (€ per m³, alles inbegrepen)</label>
+          <label for="pg" id="pgLab">Gasprijs (€ per m³, alles inbegrepen)</label>
           <input type="number" id="pg" step="0.01" min="0" value="1.40">
+          <span class="hint" id="pgHint" hidden>Dynamisch gas: neem je gemiddelde over de stookmaanden (okt–apr), niet het jaargemiddelde.</span>
         </div>
         <div class="field">
-          <label for="pe">Stroomprijs (€ per kWh, alles inbegrepen)</label>
+          <label for="pe" id="peLab">Stroomprijs (€ per kWh, alles inbegrepen)</label>
           <input type="number" id="pe" step="0.01" min="0" value="0.27">
+          <span class="hint" id="peHint" hidden></span>
         </div>
       </div>
 
@@ -289,7 +302,7 @@ footer { color: var(--ink-3); font-size: 0.85rem; display: grid; gap: 6px; }
 
 <footer>
   <p>Onderzoeksprototype, geen commercieel product en geen installatieadvies. Een installateur hoort het vermogen altijd te controleren met een warmteverliesberekening.</p>
-  <p>Weerdata: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0).</p>
+  <p>Weerdata: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0). Uurprijzen stroom (day-ahead, NL): <a href="https://www.energy-charts.info" target="_blank" rel="noopener">Energy-Charts</a> / Bundesnetzagentur | SMARD.de (CC BY 4.0).</p>
   <p>Privacy: je verbruik verlaat je apparaat niet. We tellen anoniem hoe vaak de pagina bezocht en gebruikt wordt, met <a href="https://www.goatcounter.com" target="_blank" rel="noopener">GoatCounter</a>: zonder cookies en zonder persoonsgegevens. <a href="https://docs.google.com/forms/d/1Bvd4QsMGuZBhYRDQXadeJUgTok-_Zs2IxI_n1I2AM6A/viewform" target="_blank" rel="noopener">Feedback geven</a></p>
 </footer>
 <script data-goatcounter="https://wilniuswarmtepomp.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
@@ -487,6 +500,82 @@ async function fetchWeather(lat, lon, start, end) {
   return map;
 }
 
+/* ============================================================ dynamische prijzen */
+// Uurprijzen (day-ahead, NL, excl. btw) staan als bestand bij de pagina: Energy-Charts laat geen aanvragen vanaf andere sites toe.
+const BTW = 1.21;
+const OPSLAG_DYN = 0.018;     // € per kWh incl. btw: inkoopvergoeding ANWB Energie en Tibber (2026)
+const EB_STROOM = 0.0916;     // € per kWh excl. btw: energiebelasting op stroom 2026
+async function loadPrices() {
+  if (state.prices || state.pricesFailed) return;
+  try {
+    const r = await fetch("prijzen/nl-dayahead-uur.json");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    const v = j.prijzen, h0 = j.start_uur_utc;
+    state.prices = { h0, v, n: v.length };
+    // Eerste schatting van de gemiddelde all-in stroomprijs: beursgemiddelde laatste 12 maanden + opslag + belasting
+    const from = Math.max(0, v.length - 24 * 365);
+    let sum = 0, c = 0;
+    for (let i = from; i < v.length; i++) if (v[i] != null) { sum += v[i]; c++; }
+    if (c) {
+      state.estPe = (sum / c / 1000 + EB_STROOM) * BTW + OPSLAG_DYN;
+      state.priceHint = `Schatting: beursgemiddelde van het laatste jaar plus opslag en energiebelasting, incl. btw. Staat op de jaarafrekening een ander gemiddelde, vul dat dan in.`;
+    }
+  } catch (e) { state.pricesFailed = true; }
+}
+// Uurtemperaturen (UTC) uitgelijnd op de prijsreeks: T[i] hoort bij uur h0 + i
+async function fetchHourlyTemps(lat, lon) {
+  const { h0, n } = state.prices;
+  const first = new Date(h0 * HOUR).toISOString().slice(0, 10);
+  const limit = Date.now() - 6 * DAY;
+  const lastH = Math.min(h0 + n - 1, Math.floor(limit / HOUR));
+  const last = new Date(lastH * HOUR).toISOString().slice(0, 10);
+  const u = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}` +
+            `&start_date=${first}&end_date=${last}&hourly=temperature_2m&timezone=GMT`;
+  const r = await fetch(u);
+  if (!r.ok) throw new Error("Uurweer ophalen lukt nu niet. Probeer het zo nog eens.");
+  const j = await r.json();
+  const T = new Float32Array(n).fill(NaN);
+  j.hourly.time.forEach((t, k) => {
+    const i = Math.floor(parseTime(t) / HOUR) - h0, x = j.hourly.temperature_2m[k];
+    if (i >= 0 && i < n && x != null) T[i] = x;
+  });
+  return T;
+}
+// Wat betaalt een warmtepomp gemiddeld per kWh (beursprijs, excl. btw), vergeleken met een verbruiker die de hele tijd even veel gebruikt?
+// Per dag volgt de warmtevraag het model; binnen de dag verdelen we hem naar de graden onder de stookgrens van elk uur.
+// Het rendement (COP) is hoger bij zacht weer; bij kou draait de pomp dus meer kWh per kWh warmte.
+const copFactor = T => Math.min(1.5, Math.max(0.6, 1 + 0.025 * (T - 5)));
+function timing(m, eta, P, T) {
+  const { h0, v, n } = state.prices;
+  let E = 0, EP = 0, S = 0, C = 0;
+  const yr = {};
+  for (let i = 0; i + 24 <= n;) {
+    const day = Math.floor((h0 + i + 1) / 24);            // dag in lokale tijd, bij benadering (CET)
+    let j = i; while (j < n && Math.floor((h0 + j + 1) / 24) === day) j++;
+    let ok = j - i === 24, mean = 0;
+    for (let k = i; k < j && ok; k++) { if (v[k] == null || isNaN(T[k])) ok = false; else mean += T[k]; }
+    if (ok) {
+      mean /= 24;
+      const y = new Date(day * DAY).getUTCFullYear();
+      const Y = yr[y] || (yr[y] = { E: 0, EP: 0, S: 0, C: 0 });
+      let sp = 0; for (let k = i; k < j; k++) sp += v[k];
+      S += sp; C += 24; Y.S += sp; Y.C += 24;
+      const heat = m.k * Math.max(0, m.tb - mean) * H_GAS * eta;
+      let sw = 0; for (let k = i; k < j; k++) sw += Math.max(0, m.tb - T[k]);
+      if (heat > 0 && sw > 0) for (let k = i; k < j; k++) {
+        const hh = heat * Math.max(0, m.tb - T[k]) / sw;
+        const e = (P == null ? hh : Math.min(hh, P * HP_AVAIL)) / copFactor(T[k]);
+        E += e; EP += e * v[k]; Y.E += e; Y.EP += e * v[k];
+      }
+    }
+    i = j;
+  }
+  if (!E || !C) return null;
+  const years = Object.keys(yr).map(y => ({ y: +y, days: yr[y].C / 24, hp: yr[y].E ? yr[y].EP / yr[y].E / 1000 : null, flat: yr[y].S / yr[y].C / 1000 }));
+  return { hp: EP / E / 1000, flat: S / C / 1000, delta: (EP / E - S / C) / 1000, years, days: C / 24 };
+}
+
 /* ============================================================ berekeningen */
 function scenario(m, norm, o, P) {
   // norm: temperaturen van alle dagen in de normjaren
@@ -517,12 +606,13 @@ function money(m, sc, o, mode, P) {
     const elecCook = cookGas * H_GAS * 0.45;               // koken op inductie i.p.v. gas
     const elec = elecHeat + elecDhw + elecCook;
     const gasSaved = sc.spaceGas + baseGas;
-    const save = gasSaved * o.pg + o.fixed - elec * o.pe;
-    return { gasSaved, gasLeft: 0, elec, save, before: (sc.spaceGas + baseGas) * o.pg + o.fixed };
+    // Bij een dynamisch contract kost stroom voor ruimteverwarming o.dPe meer of minder dan het gemiddelde (warm water en koken: gemiddeld)
+    const save = gasSaved * o.pg + o.fixed - ((elecDhw + elecCook) * o.pe + elecHeat * (o.pe + (o.dPe || 0)));
+    return { gasSaved, gasLeft: 0, elec, elecHeat, save, before: (sc.spaceGas + baseGas) * o.pg + o.fixed };
   }
   const gasSaved = sc.hpHeat / (H_GAS * o.eta);
   const elec = sc.hpHeat / o.cop;
-  return { gasSaved, gasLeft: sc.spaceGas + baseGas - gasSaved, elec, save: gasSaved * o.pg - elec * o.pe,
+  return { gasSaved, gasLeft: sc.spaceGas + baseGas - gasSaved, elec, elecHeat: elec, save: gasSaved * o.pg - elec * (o.pe + (o.dPe || 0)),
            before: (sc.spaceGas + baseGas) * o.pg };
 }
 
@@ -732,6 +822,7 @@ function opts() {
   return {
     mode: document.querySelector("input[name=mode]:checked").value,
     cook: document.querySelector("input[name=cook]:checked").value === "1",
+    contract: document.querySelector("input[name=contract]:checked").value,
     pg: parseNum($("#pg").value) || 0, pe: parseNum($("#pe").value) || 0,
     eta: (parseNum($("#eta").value) || 90) / 100,
     tdesign: parseNum($("#tdesign").value),
@@ -741,6 +832,10 @@ function opts() {
 function updateCalc() {
   const o = opts();
   $("#sinceField").hidden = o.mode !== "heb";
+  const dyn = o.contract === "dynamisch";
+  $("#contractHint").hidden = !dyn; $("#pgHint").hidden = !dyn; $("#peHint").hidden = !dyn || !state.priceHint;
+  $("#peLab").textContent = dyn ? "Gemiddelde stroomprijs (€ per kWh, alles inbegrepen)" : "Stroomprijs (€ per kWh, alles inbegrepen)";
+  if (dyn && state.priceHint) $("#peHint").textContent = state.priceHint;
   const ok = state.daily && state.daily.keys.length && state.place && (o.mode !== "heb" || o.since);
   $("#calc").disabled = !ok;
   $("#calcMsg").textContent = !state.place ? "Kies eerst je woonplaats." : (o.mode === "heb" && !o.since ? "Vul de startdatum van je warmtepomp in." : "");
@@ -782,6 +877,13 @@ async function calculate(ev) {
     const start = d.first < normStart ? d.first : normStart;
     const end = (d.last > normEnd ? d.last : normEnd) < limit ? (d.last > normEnd ? d.last : normEnd) : limit;
     const wx = await fetchWeather(state.place.lat, state.place.lon, start, end);
+    let hourT = null;
+    if (o.contract === "dynamisch") {
+      await loadPrices();
+      if (!state.prices) throw new Error("De uurprijzen konden niet geladen worden. Kies voor nu een vast tarief.");
+      $("#calcMsg").innerHTML = `<span class="spin"></span> uurweer ophalen…`;
+      hourT = await fetchHourlyTemps(state.place.lat, state.place.lon);
+    }
 
     const pts = d.keys.filter(k => wx.has(k)).map(k => ({ date: k, T: wx.get(k), g: d.days.get(k) }));
     const before = o.mode === "heb" ? pts.filter(p => p.date < o.since) : pts;
@@ -791,7 +893,7 @@ async function calculate(ev) {
     const norm = [];
     for (const [k, T] of wx) if (k >= normStart && k <= normEnd) norm.push({ T, mo: +k.slice(5, 7) - 1 });
     const winters = perWinter(before, m);
-    state.result = { m, pts, before, after, norm, winters, o };
+    state.result = { m, pts, before, after, norm, winters, o, hourT };
     renderReport();
     track("rapport-" + o.mode);
     $("#calcMsg").textContent = "";
@@ -857,6 +959,7 @@ function renderReport() {
       <li>Het warmteverlies is afgeleid uit gas, met een ketelrendement van ${fmt(o.eta * 100)} % en ${fmt(H_GAS, 2)} kWh per m³. Een ander rendement verschuift alle uitkomsten evenredig.</li>
       <li>Een "normaal jaar" is het gemiddelde weer van ${norm.length ? `${fmt(new Date().getFullYear() - NORM_YEARS, 0).replace(".", "")}–${new Date().getFullYear() - 1}` : "de afgelopen jaren"} bij ${esc(state.place.name)}.</li>
       <li>Het vermogen bij ${fmt(o.tdesign)} °C geldt voor een daggemiddelde. 's Nachts en bij wind kan de vraag hoger zijn; een installateur rekent met een marge.</li>
+      ${o.contract === "dynamisch" ? `<li>Dynamisch contract: de stroomprijs per uur is de echte beursprijs (day-ahead, NL) van januari 2023 tot nu, gecombineerd met het weer van diezelfde uren. Prijsniveaus uit het verleden zijn geen voorspelling; het gaat om het verschil tussen de uren dat een warmtepomp draait en de andere uren. Gas wordt als vast bedrag gerekend.</li>` : ""}
       <li>Houtkachel, vakanties, een verbouwing of meer mensen thuis verstoren de meting. Zie je rare stippen, dan is dat vaak de reden.</li>
       <li>De warmtepomp levert hier maximaal ${fmt(HP_AVAIL * 100)} % van zijn vermogen over een hele dag (ontdooien, pieken). Een hybride stookt de rest met de ketel.</li>
     </ul>
@@ -912,19 +1015,40 @@ function winterNote(w, m) {
   return `${msg}<div class="tbl-wrap"><table><thead><tr><th>Stookseizoen</th><th>m³ per graaddag</th><th>W/K</th><th>dagen</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+function dynBlock(t, oo, mon) {
+  if (!t) return "";
+  const dEur = t.delta * BTW, yearly = dEur * mon.elecHeat;
+  const dearer = dEur > 0.0005, cheaper = dEur < -0.0005;
+  const verdict = dearer ? `Een warmtepomp draait vooral in de duurdere uren. Dat kost ongeveer ${eur(yearly)} per jaar meer dan met een gemiddelde stroomprijs, en dat zit al in de besparing hierboven.`
+    : cheaper ? `Een warmtepomp draait vooral in de goedkopere uren. Dat levert ongeveer ${eur(-yearly)} per jaar op ten opzichte van een gemiddelde stroomprijs, en dat zit al in de besparing hierboven.`
+    : `Het tijdstip maakt hier nauwelijks uit; de uitkomst is gelijk aan die met een gemiddelde stroomprijs.`;
+  const rows = t.years.map(y => `<tr><td>${y.y}${y.days < 360 ? " (deel)" : ""}</td><td>${y.hp == null ? "–" : fmt(y.hp * 100, 1)}</td><td>${fmt(y.flat * 100, 1)}</td><td>${y.hp == null ? "–" : (y.hp - y.flat >= 0 ? "+" : "−") + fmt(Math.abs(y.hp - y.flat) * 100, 1)}</td></tr>`).join("");
+  return `
+    <div class="dyn">
+      <h3>Dynamisch contract: wanneer draait de warmtepomp?</h3>
+      <p class="muted">${verdict} Beursprijs voor de uren dat de warmtepomp draait: gemiddeld ${fmt(t.hp * 100, 1)} cent per kWh, tegen ${fmt(t.flat * 100, 1)} cent gemiddeld over alle uren (excl. btw, ${fmt(t.days)} dagen sinds januari 2023). Dat verschil, ${fmt(Math.abs(dEur) * 100, 1)} cent incl. btw, tellen we op bij je gemiddelde stroomprijs.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Jaar</th><th>warmtepompuren</th><th>alle uren</th><th>verschil</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="muted">Cent per kWh, beursprijs excl. btw. De warmtepomp volgt hier de warmtevraag; slim sturen op prijs (verwarmen in goedkope uren, bufferen) zit er niet in en kan het verschil kleiner maken.</p>
+    </div>`;
+}
+
 function renderAdvice() {
-  const { m, norm, o } = state.result;
+  const { m, norm, o, hourT } = state.result;
   const v = id => { const e = $("#" + id); return e ? +e.value : null; };
   const oo = { ...o, cop: v("cop"), copDhw: 2.5, pg: v("pgR"), pe: v("peR"), fixed: v("fixed") || 0 };
   const P = o.mode === "hybride" ? v("cap") : null;
   const UA = m.k * H_GAS * o.eta / 24 * 1000, Pdesign = UA * (m.tb - o.tdesign) / 1000;
+  // Dynamisch contract: meerprijs (incl. btw) van stroom op de uren dat de warmtepomp draait, t.o.v. het gemiddelde
+  const dyn = hourT ? timing(m, o.eta, P, hourT) : null;
+  const dPeFor = p => { const t = hourT && (p === P ? dyn : timing(m, o.eta, p, hourT)); return t ? t.delta * BTW : 0; };
+  oo.dPe = dyn ? dyn.delta * BTW : 0;
   const sc = scenario(m, norm, oo, P);
   const mon = money(m, sc, oo, o.mode, P);
   let html;
   if (o.mode === "hybride") {
     let enough = null;
     const rows = [3, 4, 5, 6, 8].map(p => {
-      const s = scenario(m, norm, oo, p), mm = money(m, s, oo, "hybride", p);
+      const s = scenario(m, norm, oo, p), mm = money(m, s, { ...oo, dPe: dPeFor(p) }, "hybride", p);
       if (enough == null && s.share >= 0.9) enough = p;
       return `<tr class="${p === P ? "sel" : ""}"><td>${p} kW</td><td>${fmt(s.share * 100)} %</td><td>${fmt(mm.gasSaved)} m³</td><td>${fmt(mm.elec)} kWh</td><td>${eur(mm.save)}</td></tr>`;
     }).join("");
@@ -936,6 +1060,7 @@ function renderAdvice() {
         ${kpi(fmt(mon.elec), "kWh", "Extra stroom per jaar", `bij SCOP ${fmt(oo.cop, 1)}`)}
       </div>
       <div><span class="muted">Besparing per jaar</span><div class="big-save">${eur(mon.save)}</div></div>
+      ${dynBlock(dyn, oo, mon)}
       <div class="tbl-wrap"><table><thead><tr><th>Vermogen</th><th>deel warmte</th><th>minder gas</th><th>extra stroom</th><th>besparing/jaar</th></tr></thead><tbody>${rows}</tbody></table></div>
       <p class="muted">${enough
         ? `Vanaf ${enough} kW levert de warmtepomp 90 % of meer van de warmte. Groter levert weinig extra op, want de koudste dagen zijn zeldzaam.`
@@ -950,6 +1075,7 @@ function renderAdvice() {
         ${kpi(fmt(mon.elec), "kWh", "Extra stroom per jaar", `verwarming SCOP ${fmt(oo.cop, 1)}, warm water 2,5`)}
       </div>
       <div><span class="muted">Besparing per jaar, inclusief opzeggen gasaansluiting</span><div class="big-save">${eur(mon.save)}</div></div>
+      ${dynBlock(dyn, oo, mon)}
       <p class="muted">Een volledig elektrische warmtepomp werkt het best met lage-temperatuurverwarming (vloerverwarming of grote radiatoren) en goede isolatie. Je warmteverlies van ${fmt(Math.round(UA / 10) * 10)} W/K ${UA > 350 ? "is aan de hoge kant: isoleren vóór of samen met de warmtepomp is het overwegen waard" : "is gunstig voor een volledig elektrische warmtepomp"}.</p>`;
   }
   $("#b-advice").innerHTML = html;
@@ -999,7 +1125,16 @@ drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") 
 drop.addEventListener("drop", e => { leaveDemo(); addFiles([...e.dataTransfer.files]); });
 $("#placeBtn").onclick = searchPlace;
 $("#place").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); searchPlace(); } });
-document.querySelectorAll("input[name=mode], #since").forEach(e => e.addEventListener("change", updateCalc));
+document.querySelectorAll("input[name=mode], input[name=contract], #since").forEach(e => e.addEventListener("change", updateCalc));
+// Dynamisch: vul een eerste schatting van de gemiddelde stroomprijs in, zolang de gebruiker er zelf nog niets aan veranderde
+$("#pe").addEventListener("input", () => { state.peTouched = true; });
+document.querySelectorAll("input[name=contract]").forEach(e => e.addEventListener("change", async () => {
+  if (e.value !== "dynamisch" || !e.checked) return;
+  await loadPrices();
+  if (!state.prices) { $("#contractHint").hidden = false; $("#contractHint").textContent = "De uurprijzen konden niet geladen worden. Kies voor nu een vast tarief."; return; }
+  if (state.estPe && !state.peTouched) $("#pe").value = state.estPe.toFixed(2);
+  updateCalc();
+}));
 $("#qform").addEventListener("submit", calculate);
 
 // Voorbeeldhuis: geanonimiseerde dagstanden (dagtotalen, afwezigheid weggepoetst, geschaald met ruis)
